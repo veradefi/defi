@@ -1,29 +1,29 @@
 # README #
 
-This README would normally document whatever steps are necessary to get your application up and running.
 
-### What is this repository for? ###
+### Core Functionality ###
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+-ERC20    VT Token
+-ERC721   AssetToken
+-AssetManager Contract
 
-### How do I get set up? ###
+Owner of 721 Token deposit asset worth X VT to the manage using AssetManager->Deposit Function
+AssetManager send X VT Token to Owner as loan, loan balance increase daily by interest. 
+When owner pay back the loan AssetManager send asset x123 back to Owner
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
+### Example ###
 
-### Contribution guidelines ###
+Bob  walletB
+AssetManager walletM
 
-* Writing tests
-* Code review
-* Other guidelines
+Bob owns 721 token x123 worth 100 VT
+Bob deposit x123 to AssetManager walletM
+AssetManager send 100 VT to walletB
+Daily interest 0.05
 
-### Who do I talk to? ###
+Day 1 Bob loan balance 100
+Day 2 Bob loan balance 100.05
+Day 2 Bob loan balance 100.100025
 
-* Repo owner or admin
-* Other community or team contact
+When Bob pays back the balance the asset is returned. 
+
