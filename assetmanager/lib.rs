@@ -4,20 +4,13 @@ use ink_lang as ink;
 
 #[ink::contract]
 mod assetmanager {
+    use administration::Administration;
     use ink_storage::collections::HashMap as StorageHashMap;
-    use ink_storage::traits::{PackedLayout, SpreadLayout, StorageLayout};
-
-    pub type TokenId = u32;
-
-    #[derive(Clone, Default, scale::Encode, scale::Decode, Debug, SpreadLayout)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
-    struct Config {
-        interest_rate: u64,
-        enabled: bool,
-        id: TokenId,
-        // erc721_address: AccountId,
-        // erc20_address: AccountId,
-    }
+    use ink_storage::{
+        traits::{PackedLayout, SpreadLayout, StorageLayout},
+        Lazy,
+    };
+    use scale::{Decode, Encode};
 
     #[derive(Clone, Default, scale::Encode, scale::Decode, Debug, SpreadLayout, PackedLayout)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
@@ -36,11 +29,19 @@ mod assetmanager {
         paused: bool,
         total_assets: u64,
         borrowers: StorageHashMap<AccountId, Borrower>,
-        config: Config,
+        administration: Lazy<Administration>,
+    }
+
+    #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        NotOwner,
+        TokenNotFound,
+        NotAllowed,
     }
 
     #[ink(event)]
-    pub struct Borrow {
+    pub struct Borrowed {
         #[ink(topic)]
         asset: AccountId,
         #[ink(topic)]
@@ -52,7 +53,7 @@ mod assetmanager {
     }
 
     #[ink(event)]
-    pub struct Repay {
+    pub struct Repaid {
         #[ink(topic)]
         asset: AccountId,
         #[ink(topic)]
@@ -70,32 +71,28 @@ mod assetmanager {
     impl AssetManager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
-        pub fn new() -> Self {
+        pub fn new(administration_code_hash: Hash) -> Self {
             let owner = Self::env().caller();
+            let total_balance = Self::env().balance();
 
-            let opt = Config {
-                enabled: true,
-                id: 1,
-                interest_rate: 1_0,
-            };
+            let administration = Administration::new(0, 0, false)
+                .endowment(total_balance / 2)
+                .code_hash(administration_code_hash)
+                .instantiate()
+                .expect("failed at instantiating the `Administration` contract");
+
             let instance = Self {
                 owner: owner,
                 paused: false,
                 total_assets: 1,
                 borrowers: Default::default(),
-                config: opt,
+                administration: Lazy::new(administration),
             };
             instance
         }
 
-        /// default constrcutor
-        #[ink(constructor)]
-        pub fn default() -> Self {
-            Self::new()
-        }
-
         #[ink(message)]
-        pub fn borrow(&mut self, asset: AccountId, amount: Balance) {
+        pub fn borrow(&mut self, asset: AccountId, amount: Balance) -> Result<(), Error> {
             let owner = self.env().caller();
             let current_time = self.get_current_time();
             let borrower_opt = self.borrowers.get(&owner);
@@ -110,16 +107,18 @@ mod assetmanager {
                 },
             );
 
-            self.env().emit_event(Borrow {
+            self.env().emit_event(Borrowed {
                 asset: asset,
                 user: owner,
                 amount: amount,
-                borrow_rate: self.config.interest_rate,
+                borrow_rate: 1_0,
             });
+
+            Ok(())
         }
 
         #[ink(message)]
-        pub fn repay(&mut self, asset: AccountId, amount: Balance) {
+        pub fn repay(&mut self, asset: AccountId, amount: Balance) -> Result<(), Error> {
             let owner = self.env().caller();
             let current_time = self.get_current_time();
 
@@ -130,11 +129,13 @@ mod assetmanager {
             borrower.balance -= amount;
             borrower.date_repaid = Some(current_time);
 
-            Self::env().emit_event(Repay {
+            self.env().emit_event(Repaid {
                 asset: asset,
                 user: owner,
                 amount: amount,
             });
+
+            Ok(())
         }
 
         #[ink(message)]
@@ -165,7 +166,7 @@ mod assetmanager {
             });
             let interest = self.calculate_interest(
                 10,
-                self.config.interest_rate,
+                self.administration.get_interest_rate(),
                 borrower.date_borrowed.unwrap_or(0),
             );
             Balance::from(interest)
@@ -195,15 +196,15 @@ mod assetmanager {
         /// We test if the constructor does its job.
         #[ink::test]
         fn new_works() {
-            let assetmanager = AssetManager::new();
-            assert_eq!(assetmanager.config.enabled, true);
+            let assetmanager = AssetManager::new(Hash::default());
+            assert_eq!(assetmanager.administration.is_enabled(), true);
         }
 
         /// We test a simple use case of our contract.
         #[ink::test]
         fn borrow_works() {
-            let mut assetmanager = AssetManager::new();
-            assert_eq!(assetmanager.config.enabled, true);
+            let mut assetmanager = AssetManager::new(Hash::default());
+            assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
@@ -221,8 +222,8 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn repay_works() {
-            let mut assetmanager = AssetManager::new();
-            assert_eq!(assetmanager.config.enabled, true);
+            let mut assetmanager = AssetManager::new(Hash::default());
+            assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
@@ -241,8 +242,8 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn get_principal_balance_works() {
-            let mut assetmanager = AssetManager::new();
-            assert_eq!(assetmanager.config.enabled, true);
+            let mut assetmanager = AssetManager::new(Hash::default());
+            assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
