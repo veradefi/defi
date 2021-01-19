@@ -65,25 +65,27 @@ mod assetmanager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
         pub fn new(
-            administration_code_hash: Hash,
-            lendingmanager_code_hash: Hash,
+            administration_address: AccountId,
+            lendingmanager_address: AccountId,
             erc20_address: AccountId,
         ) -> Self {
             let owner = Self::env().caller();
             let total_balance = Self::env().balance();
 
-            let administration = Administration::new(0, 0, false)
-                .endowment(total_balance / 3)
-                .code_hash(administration_code_hash)
-                .instantiate()
-                .expect("failed at instantiating the `Administration` contract");
+            // let administration = Administration::default()
+            //     .endowment(10000)
+            //     .code_hash(administration_code_hash)
+            //     .instantiate()
+            //     .expect("failed at instantiating the `Administration` contract");
 
-            let lendingmanager = LendingManager::new()
-                .endowment(total_balance / 3)
-                .code_hash(lendingmanager_code_hash)
-                .instantiate()
-                .expect("failed at instantiating the `Administration` contract");
+            // let lendingmanager = LendingManager::default()
+            //     .endowment(10000)
+            //     .code_hash(lendingmanager_code_hash)
+            //     .instantiate()
+            //     .expect("failed at instantiating the `Administration` contract");
 
+            let administration = Administration::from_account_id(administration_address);
+            let lendingmanager = LendingManager::from_account_id(lendingmanager_address);
             let erc20 = Erc20::from_account_id(erc20_address);
             let instance = Self {
                 owner: owner,
@@ -115,17 +117,16 @@ mod assetmanager {
             let owner = self.env().account_id();
             let erc_amount = amount * transfer_rate;
 
-            self.erc20
-                .transfer_from(owner, borrower, Balance::from(erc_amount));
+            self.erc20.transfer(borrower, Balance::from(erc_amount));
 
             // TODO: Make ERC721 transfer from borrower based on amount borrowed
             // ERC721.transfer_from(borrower, current_contract, amount)
-            self.env().emit_event(Borrowed {
-                asset: asset,
-                user: borrower,
-                amount: amount,
-                borrow_rate: 1_0,
-            });
+            // self.env().emit_event(Borrowed {
+            //     asset: asset,
+            //     user: borrower,
+            //     amount: amount,
+            //     borrow_rate: interest_rate,
+            // });
 
             Ok(())
         }
@@ -144,11 +145,11 @@ mod assetmanager {
 
             // TODO: Make ERC20 transfer from borrower based on amount repaid
             // ERC721.transfer_from(borrower, current_contract, amount)
-            self.env().emit_event(Repaid {
-                asset: asset,
-                user: borrower,
-                amount: amount,
-            });
+            // self.env().emit_event(Repaid {
+            //     asset: asset,
+            //     user: borrower,
+            //     amount: amount,
+            // });
 
             Ok(())
         }
@@ -201,16 +202,22 @@ mod assetmanager {
         /// We test if the constructor does its job.
         #[ink::test]
         fn new_works() {
-            let assetmanager =
-                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
+            let assetmanager = AssetManager::new(
+                AccountId::default(),
+                AccountId::default(),
+                AccountId::default(),
+            );
             assert_eq!(assetmanager.administration.is_enabled(), true);
         }
 
         /// We test a simple use case of our contract.
         #[ink::test]
         fn borrow_works() {
-            let mut assetmanager =
-                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
+            let mut assetmanager = AssetManager::new(
+                AccountId::default(),
+                AccountId::default(),
+                AccountId::default(),
+            );
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
@@ -229,8 +236,11 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn repay_works() {
-            let mut assetmanager =
-                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
+            let mut assetmanager = AssetManager::new(
+                AccountId::default(),
+                AccountId::default(),
+                AccountId::default(),
+            );
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
@@ -250,8 +260,11 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn get_principal_balance_works() {
-            let mut assetmanager =
-                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
+            let mut assetmanager = AssetManager::new(
+                AccountId::default(),
+                AccountId::default(),
+                AccountId::default(),
+            );
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
