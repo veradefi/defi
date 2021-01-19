@@ -5,8 +5,10 @@ use ink_lang as ink;
 #[ink::contract]
 mod assetmanager {
     use administration::Administration;
+    // use erc20::Erc20;
     use lendingmanager::LendingManager;
 
+    use ink_env::call::FromAccountId;
     use ink_storage::Lazy;
     use scale::{Decode, Encode};
 
@@ -20,6 +22,7 @@ mod assetmanager {
         total_assets: u64,
         administration: Lazy<Administration>,
         lendingmanager: Lazy<LendingManager>,
+        // erc20: Lazy<Erc20>,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
@@ -61,7 +64,11 @@ mod assetmanager {
     impl AssetManager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
-        pub fn new(administration_code_hash: Hash) -> Self {
+        pub fn new(
+            administration_code_hash: Hash,
+            lendingmanager_code_hash: Hash,
+            erc20_address: AccountId,
+        ) -> Self {
             let owner = Self::env().caller();
             let total_balance = Self::env().balance();
 
@@ -77,12 +84,14 @@ mod assetmanager {
                 .instantiate()
                 .expect("failed at instantiating the `Administration` contract");
 
+            // let erc20 = Erc20::from_account_id(erc20_address);
             let instance = Self {
                 owner: owner,
                 paused: false,
                 total_assets: 1,
                 administration: Lazy::new(administration),
                 lendingmanager: Lazy::new(lendingmanager),
+                // erc20: Lazy::new(erc20),
             };
             instance
         }
@@ -103,9 +112,11 @@ mod assetmanager {
                 transfer_rate,
                 current_time,
             );
+            let owner = self.env().account_id();
+            let erc_amount = amount * transfer_rate;
 
-            // TODO: Make ERC20 transfer to borrower based on amount borrowed
-            // ERC20.transfer_from(current_contract, borrower, erc20_tokens)
+            //self.erc20
+            //   .transfer_from(owner, borrower, Balance::from(erc_amount));
 
             // TODO: Make ERC721 transfer from borrower based on amount borrowed
             // ERC721.transfer_from(borrower, current_contract, amount)
@@ -190,14 +201,16 @@ mod assetmanager {
         /// We test if the constructor does its job.
         #[ink::test]
         fn new_works() {
-            let assetmanager = AssetManager::new(Hash::default());
+            let assetmanager =
+                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
             assert_eq!(assetmanager.administration.is_enabled(), true);
         }
 
         /// We test a simple use case of our contract.
         #[ink::test]
         fn borrow_works() {
-            let mut assetmanager = AssetManager::new(Hash::default());
+            let mut assetmanager =
+                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
@@ -216,7 +229,8 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn repay_works() {
-            let mut assetmanager = AssetManager::new(Hash::default());
+            let mut assetmanager =
+                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
@@ -236,7 +250,8 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn get_principal_balance_works() {
-            let mut assetmanager = AssetManager::new(Hash::default());
+            let mut assetmanager =
+                AssetManager::new(Hash::default(), Hash::default(), AccountId::default());
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
