@@ -5,7 +5,7 @@ use ink_lang as ink;
 #[ink::contract]
 mod assetmanager {
     use administration::Administration;
-    // use erc20::Erc20;
+    use erc20::Erc20;
     use lendingmanager::LendingManager;
 
     use ink_env::call::FromAccountId;
@@ -22,7 +22,7 @@ mod assetmanager {
         total_assets: u64,
         administration: Lazy<Administration>,
         lendingmanager: Lazy<LendingManager>,
-        // erc20: Lazy<Erc20>,
+        erc20: Lazy<Erc20>,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
@@ -80,18 +80,18 @@ mod assetmanager {
 
             let lendingmanager = LendingManager::new()
                 .endowment(total_balance / 3)
-                .code_hash(administration_code_hash)
+                .code_hash(lendingmanager_code_hash)
                 .instantiate()
                 .expect("failed at instantiating the `Administration` contract");
 
-            // let erc20 = Erc20::from_account_id(erc20_address);
+            let erc20 = Erc20::from_account_id(erc20_address);
             let instance = Self {
                 owner: owner,
                 paused: false,
                 total_assets: 1,
                 administration: Lazy::new(administration),
                 lendingmanager: Lazy::new(lendingmanager),
-                // erc20: Lazy::new(erc20),
+                erc20: Lazy::new(erc20),
             };
             instance
         }
@@ -115,8 +115,8 @@ mod assetmanager {
             let owner = self.env().account_id();
             let erc_amount = amount * transfer_rate;
 
-            //self.erc20
-            //   .transfer_from(owner, borrower, Balance::from(erc_amount));
+            self.erc20
+                .transfer_from(owner, borrower, Balance::from(erc_amount));
 
             // TODO: Make ERC721 transfer from borrower based on amount borrowed
             // ERC721.transfer_from(borrower, current_contract, amount)
