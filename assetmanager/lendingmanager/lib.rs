@@ -73,7 +73,7 @@ pub mod lendingmanager {
         #[ink(message)]
         pub fn handle_borrow(&mut self, asset: AccountId, borrower: AccountId, amount: u64, interest_rate: u64, transfer_rate: u64, time: u64) -> Result<(), Error> {
             let borrower_opt = self.borrowers.get(&borrower);
-            assert_eq!(borrower_opt.is_some(), false, "Has already borrowed");
+            // assert_eq!(borrower_opt.is_some(), false, "Has already borrowed");
 
             self.borrowers.insert(
                 borrower,
@@ -89,7 +89,7 @@ pub mod lendingmanager {
         #[ink(message)]
         pub fn handle_repayment(&mut self, asset: AccountId, borrower: AccountId, amount: u64, time: u64) -> Result<(), Error> {
             let borrower_opt = self.borrowers.get_mut(&borrower);
-            assert_eq!(borrower_opt.is_some(), true, "Borrower does not exist");
+            // assert_eq!(borrower_opt.is_some(), true, "Borrower does not exist");
 
             let borrower = borrower_opt.unwrap();
             borrower.balance = borrower.balance - amount as u128;
