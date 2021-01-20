@@ -18,9 +18,7 @@ pub mod lendingmanager {
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
-        NotOwner,
-        TokenNotFound,
-        NotAllowed,
+        
     }
 
     #[derive(Clone, Default, Encode, Decode, Debug, SpreadLayout, PackedLayout)]
@@ -34,11 +32,12 @@ pub mod lendingmanager {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     struct Loan {
         id: LoanId,
-        borrower_address: AccountId,
+        amount: u64,
         transfer_rate: u64,
         interest_rate: u64,
         date_borrowed: u64,
         date_repaid: Option<u64>,
+        is_repaid: bool,
     }
 
     /// Defines the storage of your contract.
@@ -47,7 +46,8 @@ pub mod lendingmanager {
     #[ink(storage)]
     pub struct LendingManager {
         borrowers: StorageHashMap<AccountId, Borrower>,
-        loans: StorageHashMap<AccountId, Borrower>,
+        loans: StorageHashMap<AccountId, Vec<Loan>>,
+        total_loans: u64,
     }
 
     impl LendingManager {
@@ -57,6 +57,7 @@ pub mod lendingmanager {
             let instance = Self {
                 borrowers: Default::default(),
                 loans: Default::default(),
+                total_loans: 0,
             };
             instance
         }
@@ -71,17 +72,42 @@ pub mod lendingmanager {
 
 
         #[ink(message)]
-        pub fn handle_borrow(&mut self, asset: AccountId, borrower: AccountId, amount: u64, interest_rate: u64, transfer_rate: u64, time: u64) -> Result<(), Error> {
-            let borrower_opt = self.borrowers.get(&borrower);
+        pub fn handle_borrow(&mut self, asset: AccountId, borrower_address: AccountId, amount: u64, interest_rate: u64, transfer_rate: u64, time: u64) -> Result<(), Error> {
+            let borrower_opt = self.borrowers.get(&borrower_address);
             // assert_eq!(borrower_opt.is_some(), false, "Has already borrowed");
 
+            let mut balance = Balance::from(amount);
+            if borrower_opt.is_some() {
+                let borrower = self.borrowers.get_mut(&borrower_address).unwrap();
+                balance = balance + borrower.balance;
+            }
             self.borrowers.insert(
-                borrower,
+                borrower_address,
                 Borrower {
-                    balance: Balance::from(amount),
+                    balance: balance,
                     last_updated_at: time,
                 },
             );
+
+            self.total_loans += 1;
+            let loan = Loan{
+                id: self.total_loans,
+                amount: amount,
+                interest_rate: interest_rate,
+                transfer_rate: transfer_rate,
+                date_borrowed: time,
+                date_repaid: None,
+                is_repaid: false,
+            };
+
+            if self.loans.get(&borrower_address).is_some() {
+                let borrower_loans = self.loans.get_mut(&borrower_address).unwrap();
+                borrower_loans.push(loan);
+            } else {
+                let mut borrower_loans: Vec<Loan> = Vec::new();
+                borrower_loans.push(loan);
+                self.loans.insert(borrower_address, borrower_loans);
+            }
 
             Ok(())
         }
