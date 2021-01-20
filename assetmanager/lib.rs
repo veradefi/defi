@@ -6,6 +6,7 @@ use ink_lang as ink;
 mod assetmanager {
     use administration::Administration;
     use erc20::Erc20;
+    use erc721::Erc721;
     use lendingmanager::LendingManager;
 
     use ink_env::call::FromAccountId;
@@ -23,6 +24,7 @@ mod assetmanager {
         administration: Lazy<Administration>,
         lendingmanager: Lazy<LendingManager>,
         erc20: Lazy<Erc20>,
+        erc721: Lazy<Erc721>,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
@@ -68,6 +70,7 @@ mod assetmanager {
             administration_address: AccountId,
             lendingmanager_address: AccountId,
             erc20_address: AccountId,
+            erc721_address: AccountId,
         ) -> Self {
             let owner = Self::env().caller();
             let total_balance = Self::env().balance();
@@ -87,6 +90,7 @@ mod assetmanager {
             let administration = Administration::from_account_id(administration_address);
             let lendingmanager = LendingManager::from_account_id(lendingmanager_address);
             let erc20 = Erc20::from_account_id(erc20_address);
+            let erc721 = Erc721::from_account_id(erc721_address);
             let instance = Self {
                 owner: owner,
                 paused: false,
@@ -94,12 +98,13 @@ mod assetmanager {
                 administration: Lazy::new(administration),
                 lendingmanager: Lazy::new(lendingmanager),
                 erc20: Lazy::new(erc20),
+                erc721: Lazy::new(erc721),
             };
             instance
         }
 
         #[ink(message)]
-        pub fn borrow(&mut self, asset: AccountId, amount: u64) -> Result<(), Error> {
+        pub fn borrow(&mut self, asset: AccountId, amount: u64, id: u32) -> Result<(), Error> {
             let borrower = self.env().caller();
             let current_time = self.get_current_time();
             let interest_rate = self.administration.get_interest_rate();
@@ -117,6 +122,8 @@ mod assetmanager {
             let owner = self.env().account_id();
             let erc_amount = amount * transfer_rate;
 
+            self.erc721.transfer_from(borrower, owner, id);
+
             self.erc20.transfer(borrower, Balance::from(erc_amount));
 
             // TODO: Make ERC721 transfer from borrower based on amount borrowed
@@ -132,9 +139,10 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn repay(&mut self, asset: AccountId, amount: u64) -> Result<(), Error> {
+        pub fn repay(&mut self, asset: AccountId, amount: u64, id: u32) -> Result<(), Error> {
             let borrower = self.env().caller();
             let current_time = self.get_current_time();
+            let transfer_rate = self.administration.get_transfer_rate();
 
             // Validate operation
             self.lendingmanager
@@ -142,6 +150,12 @@ mod assetmanager {
 
             // TODO: Make ERC721 transfer to borrower based on amount repaid
             // ERC721.transfer_from(current_contract, borrower, erc721_tokens)
+            let owner = self.env().account_id();
+
+            self.erc721.transfer(borrower, id);
+
+            self.erc20
+                .transfer_from(borrower, owner, Balance::from(amount));
 
             // TODO: Make ERC20 transfer from borrower based on amount repaid
             // ERC721.transfer_from(borrower, current_contract, amount)
@@ -206,6 +220,7 @@ mod assetmanager {
                 AccountId::default(),
                 AccountId::default(),
                 AccountId::default(),
+                AccountId::default(),
             );
             assert_eq!(assetmanager.administration.is_enabled(), true);
         }
@@ -217,13 +232,14 @@ mod assetmanager {
                 AccountId::default(),
                 AccountId::default(),
                 AccountId::default(),
+                AccountId::default(),
             );
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
 
-            assetmanager.borrow(asset, 1);
+            assetmanager.borrow(asset, 1, 1);
 
             // Borrowed event triggered
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
@@ -240,15 +256,16 @@ mod assetmanager {
                 AccountId::default(),
                 AccountId::default(),
                 AccountId::default(),
+                AccountId::default(),
             );
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
 
-            assetmanager.borrow(asset, 5);
+            assetmanager.borrow(asset, 5, 1);
 
-            assetmanager.repay(asset, 2);
+            assetmanager.repay(asset, 2, 1);
             // Borrow and Repay events triggered
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
             assert_eq!(2, emitted_events.len());
@@ -264,6 +281,7 @@ mod assetmanager {
                 AccountId::default(),
                 AccountId::default(),
                 AccountId::default(),
+                AccountId::default(),
             );
             assert_eq!(assetmanager.administration.is_enabled(), true);
 
@@ -272,17 +290,17 @@ mod assetmanager {
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 0);
 
-            assetmanager.borrow(asset, 2);
+            assetmanager.borrow(asset, 2, 1);
 
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 2);
 
-            assetmanager.repay(asset, 1);
+            assetmanager.repay(asset, 1, 1);
 
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 1);
 
-            assetmanager.repay(asset, 1);
+            assetmanager.repay(asset, 1, 1);
 
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 0);
