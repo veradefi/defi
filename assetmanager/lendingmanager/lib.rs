@@ -14,6 +14,7 @@ pub mod lendingmanager {
     use scale::{Decode, Encode};
 
     pub type LoanId = u64;
+    pub type TokenId = u32;
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -32,7 +33,7 @@ pub mod lendingmanager {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     struct Loan {
         id: LoanId,
-        amount: u64,
+        amount: Balance,
         transfer_rate: u64,
         interest_rate: u64,
         date_borrowed: u64,
@@ -40,13 +41,10 @@ pub mod lendingmanager {
         is_repaid: bool,
     }
 
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
     #[ink(storage)]
     pub struct LendingManager {
         borrowers: StorageHashMap<AccountId, Borrower>,
-        loans: StorageHashMap<AccountId, Vec<Loan>>,
+        loans: StorageHashMap<(AccountId, TokenId), Loan>,
         total_loans: u64,
     }
 
@@ -62,21 +60,13 @@ pub mod lendingmanager {
             instance
         }
 
-        /// Constructor that initializes the `bool` value to `false`.
-        ///
-        /// Constructors can delegate to other constructors.
-        #[ink(constructor)]
-        pub fn default() -> Self {
-            Self::new()
-        }
-
 
         #[ink(message)]
-        pub fn handle_borrow(&mut self, asset: AccountId, borrower_address: AccountId, amount: u64, interest_rate: u64, transfer_rate: u64, time: u64) -> Result<(), Error> {
+        pub fn handle_borrow(&mut self, borrower_address: AccountId, token_id: TokenId, interest_rate: u64, transfer_rate: u64, time: u64) -> Result<(), Error> {
             let borrower_opt = self.borrowers.get(&borrower_address);
             // assert_eq!(borrower_opt.is_some(), false, "Has already borrowed");
 
-            let mut balance = Balance::from(amount);
+            let mut balance = Balance::from(transfer_rate);
             if borrower_opt.is_some() {
                 let borrower = self.borrowers.get_mut(&borrower_address).unwrap();
                 balance = balance + borrower.balance;
@@ -92,7 +82,7 @@ pub mod lendingmanager {
             self.total_loans += 1;
             let loan = Loan{
                 id: self.total_loans,
-                amount: amount,
+                amount: balance,
                 interest_rate: interest_rate,
                 transfer_rate: transfer_rate,
                 date_borrowed: time,
@@ -100,25 +90,27 @@ pub mod lendingmanager {
                 is_repaid: false,
             };
 
-            if self.loans.get(&borrower_address).is_some() {
-                let borrower_loans = self.loans.get_mut(&borrower_address).unwrap();
-                borrower_loans.push(loan);
-            } else {
-                let mut borrower_loans: Vec<Loan> = Vec::new();
-                borrower_loans.push(loan);
-                self.loans.insert(borrower_address, borrower_loans);
-            }
+            self.loans.insert(
+                (borrower_address, token_id),
+                loan,
+            );
 
             Ok(())
         }
 
         #[ink(message)]
-        pub fn handle_repayment(&mut self, asset: AccountId, borrower: AccountId, amount: u64, time: u64) -> Result<(), Error> {
-            let borrower_opt = self.borrowers.get_mut(&borrower);
+        pub fn handle_repayment(&mut self,borrower_address: AccountId, token_id: TokenId, time: u64) -> Result<(), Error> {
+            let borrower_opt = self.borrowers.get_mut(&borrower_address);
+            let loan_opt = self.loans.get_mut(&(borrower_address, token_id));
+
             // assert_eq!(borrower_opt.is_some(), true, "Borrower does not exist");
+            
+            let loan = loan_opt.unwrap();
+            loan.is_repaid = true;
+            loan.date_repaid = Some(time);
 
             let borrower = borrower_opt.unwrap();
-            borrower.balance = borrower.balance - amount as u128;
+            borrower.balance = borrower.balance - loan.amount;
             borrower.last_updated_at = time;
 
             Ok(())
