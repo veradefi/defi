@@ -67,28 +67,26 @@ mod assetmanager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
         pub fn new(
-            administration_address: AccountId,
-            lendingmanager_address: AccountId,
+            administration_code_hash: Hash,
+            lendingmanager_code_hash: Hash,
             erc20_address: AccountId,
             erc721_address: AccountId,
         ) -> Self {
             let owner = Self::env().caller();
             let total_balance = Self::env().balance();
 
-            // let administration = Administration::default()
-            //     .endowment(10000)
-            //     .code_hash(administration_code_hash)
-            //     .instantiate()
-            //     .expect("failed at instantiating the `Administration` contract");
+            let administration = Administration::default()
+                .endowment(total_balance / 3)
+                .code_hash(administration_code_hash)
+                .instantiate()
+                .expect("failed at instantiating the `Administration` contract");
 
-            // let lendingmanager = LendingManager::default()
-            //     .endowment(10000)
-            //     .code_hash(lendingmanager_code_hash)
-            //     .instantiate()
-            //     .expect("failed at instantiating the `Administration` contract");
+            let lendingmanager = LendingManager::new()
+                .endowment(total_balance / 3)
+                .code_hash(lendingmanager_code_hash)
+                .instantiate()
+                .expect("failed at instantiating the `LendingManager` contract");
 
-            let administration = Administration::from_account_id(administration_address);
-            let lendingmanager = LendingManager::from_account_id(lendingmanager_address);
             let erc20 = Erc20::from_account_id(erc20_address);
             let erc721 = Erc721::from_account_id(erc721_address);
             let instance = Self {
@@ -208,8 +206,8 @@ mod assetmanager {
         #[ink::test]
         fn new_works() {
             let assetmanager = AssetManager::new(
-                AccountId::default(),
-                AccountId::default(),
+                Hash::default(),
+                Hash::default(),
                 AccountId::default(),
                 AccountId::default(),
             );
@@ -220,8 +218,8 @@ mod assetmanager {
         #[ink::test]
         fn borrow_works() {
             let mut assetmanager = AssetManager::new(
-                AccountId::default(),
-                AccountId::default(),
+                Hash::default(),
+                Hash::default(),
                 AccountId::default(),
                 AccountId::default(),
             );
@@ -244,8 +242,8 @@ mod assetmanager {
         #[ink::test]
         fn repay_works() {
             let mut assetmanager = AssetManager::new(
-                AccountId::default(),
-                AccountId::default(),
+                Hash::default(),
+                Hash::default(),
                 AccountId::default(),
                 AccountId::default(),
             );
@@ -269,8 +267,8 @@ mod assetmanager {
         #[ink::test]
         fn get_principal_balance_works() {
             let mut assetmanager = AssetManager::new(
-                AccountId::default(),
-                AccountId::default(),
+                Hash::default(),
+                Hash::default(),
                 AccountId::default(),
                 AccountId::default(),
             );
