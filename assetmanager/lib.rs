@@ -4,6 +4,7 @@ use ink_lang as ink;
 
 #[ink::contract]
 mod assetmanager {
+    use addressmanager::AddressManager;
     use administration::Administration;
     use erc20::Erc20;
     use erc721::Erc721;
