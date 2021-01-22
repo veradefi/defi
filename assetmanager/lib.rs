@@ -19,8 +19,6 @@ mod assetmanager {
     #[ink(storage)]
     pub struct AssetManager {
         owner: AccountId,
-        paused: bool,
-        total_assets: u64,
         administration: Lazy<Administration>,
         lendingmanager: Lazy<LendingManager>,
         erc20: Lazy<Erc20>,
@@ -76,10 +74,10 @@ mod assetmanager {
             let total_balance = Self::env().balance();
 
             let administration = Administration::default()
-                .endowment(total_balance / 3)
                 .code_hash(administration_code_hash)
+                .endowment(total_balance / 3)
                 .instantiate()
-                .expect("failed at instantiating the `Administration` contract");
+                .expect("failed at instantiating the `LendingManager` contract");
 
             let lendingmanager = LendingManager::new()
                 .endowment(total_balance / 3)
@@ -91,8 +89,6 @@ mod assetmanager {
             let erc721 = Erc721::from_account_id(erc721_address);
             let instance = Self {
                 owner: owner,
-                paused: false,
-                total_assets: 1,
                 administration: Lazy::new(administration),
                 lendingmanager: Lazy::new(lendingmanager),
                 erc20: Lazy::new(erc20),
@@ -102,14 +98,15 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn borrow(&mut self, token_id: u32, on_behalf_of: AccountId) -> Result<(), Error> {
+        pub fn borrow(&mut self, token_id: u32) -> Result<(), Error> {
             let current_time = self.get_current_time();
+            let caller = self.env().caller();
             let interest_rate = self.administration.get_interest_rate();
             let transfer_rate = self.administration.get_transfer_rate();
 
             // Validate operation
             self.lendingmanager.handle_borrow(
-                on_behalf_of,
+                caller,
                 token_id,
                 interest_rate,
                 transfer_rate,
@@ -117,8 +114,8 @@ mod assetmanager {
             );
             let owner = self.env().account_id();
             let erc20_amount = Balance::from(transfer_rate);
-            self.erc721.transfer_from(on_behalf_of, owner, token_id);
-            self.erc20.transfer(on_behalf_of, erc20_amount);
+            self.erc721.transfer_from(caller, owner, token_id);
+            self.erc20.transfer(caller, erc20_amount);
 
             // self.env().emit_event(Borrowed {
             //     asset: asset,
@@ -131,23 +128,22 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn repay(&mut self, token_id: u32, on_behalf_of: AccountId) -> Result<(), Error> {
+        pub fn repay(&mut self, token_id: u32) -> Result<(), Error> {
             let current_time = self.get_current_time();
+            let caller = self.env().caller();
             let transfer_rate = self.administration.get_transfer_rate();
             let interest_rate = self.administration.get_transfer_rate();
 
             // Validate operation
             let owner = self.env().account_id();
             self.lendingmanager
-                .handle_repayment(on_behalf_of, token_id, current_time);
+                .handle_repayment(caller, token_id, current_time);
 
-            let total_balance = self
-                .lendingmanager
-                .get_total_balance(on_behalf_of, interest_rate);
+            let total_balance = self.lendingmanager.get_total_balance(caller, interest_rate);
             let erc20_amount = Balance::from(transfer_rate);
 
-            self.erc721.transfer(on_behalf_of, token_id);
-            self.erc20.transfer_from(on_behalf_of, owner, erc20_amount);
+            self.erc721.transfer(caller, token_id);
+            self.erc20.transfer_from(caller, owner, erc20_amount);
             // self.env().emit_event(Repaid {
             //     asset: asset,
             //     user: borrower,
