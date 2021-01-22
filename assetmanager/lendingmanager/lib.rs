@@ -19,19 +19,20 @@ pub mod lendingmanager {
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
-        
+        NoSuchLoan
     }
 
     #[derive(Clone, Default, Encode, Decode, Debug, SpreadLayout, PackedLayout)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
-    struct Borrower {
+    pub struct Borrower {
         balance: Balance,
         last_updated_at: u64,
+        loans: Vec<TokenId>,
     }
 
-    #[derive(Clone, Default, Encode, Decode, Debug, SpreadLayout, PackedLayout)]
+    #[derive(Clone, Default, Copy, Encode, Decode, Debug, SpreadLayout, PackedLayout)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
-    struct Loan {
+    pub struct Loan {
         id: LoanId,
         amount: Balance,
         transfer_rate: u64,
@@ -67,17 +68,6 @@ pub mod lendingmanager {
             // assert_eq!(borrower_opt.is_some(), false, "Has already borrowed");
 
             let mut balance = Balance::from(transfer_rate);
-            if borrower_opt.is_some() {
-                let borrower = self.borrowers.get_mut(&borrower_address).unwrap();
-                balance = balance + borrower.balance;
-            }
-            self.borrowers.insert(
-                borrower_address,
-                Borrower {
-                    balance: balance,
-                    last_updated_at: time,
-                },
-            );
 
             self.total_loans += 1;
             let loan = Loan{
@@ -93,6 +83,23 @@ pub mod lendingmanager {
             self.loans.insert(
                 (borrower_address, token_id),
                 loan,
+            );
+
+            let mut loans: Vec<TokenId> = Vec::new();
+            if borrower_opt.is_some() {
+                let borrower = self.borrowers.get_mut(&borrower_address).unwrap();
+                balance = balance + borrower.balance;
+                loans = borrower.loans.to_vec();
+            }
+            loans.push(token_id);
+
+            self.borrowers.insert(
+                borrower_address,
+                Borrower {
+                    balance: balance,
+                    last_updated_at: time,
+                    loans: loans
+                },
             );
 
             Ok(())
@@ -118,13 +125,13 @@ pub mod lendingmanager {
 
         #[ink(message)]
         pub fn get_principal_balance(&self, owner: AccountId) -> Balance {
-            self.borrowers
-                .get(&owner)
-                .unwrap_or(&Borrower {
-                    balance: 0,
-                    last_updated_at: 0,
-                })
-                .balance
+            let borrower_opt = self.borrowers.get(&owner);
+            if borrower_opt.is_some() {
+                return borrower_opt
+                .unwrap()
+                .balance;
+            }
+            0
         }
 
         #[ink(message)]
@@ -136,24 +143,36 @@ pub mod lendingmanager {
 
         #[ink(message)]
         pub fn get_total_debt(&self, owner: AccountId, interest_rate: u64) -> Balance {
-            let borrower = self.borrowers.get(&owner).unwrap_or(&Borrower {
-                balance: 0,
-                last_updated_at: 0,
-            });
+            let borrower_opt = self.borrowers.get(&owner);
+            if !borrower_opt.is_some() {
+                return 0
+            }
+
+            let borrower = borrower_opt.unwrap();
             let interest = self.calculate_interest(
-                10,
-                interest_rate,
-                borrower.last_updated_at,
+                borrower.balance,
+                interest_rate as u128,
+                borrower.last_updated_at as u128,
             );
-            Balance::from(interest)
+            interest
+        }
+
+        #[ink(message)]
+        pub fn get_debt_details(&self, borrower: AccountId, token_id: TokenId) -> Result<Loan, Error> {
+            let loan = self.loans.get(&(borrower, token_id));
+            if !loan.is_some() {
+                return Err(Error::NoSuchLoan);
+            }
+
+            Ok(*loan.clone().unwrap())
         }
 
         // TODO: Calculate compound interest
-        fn calculate_interest(&self, amount: u64, interest_rate: u64, timestamp: u64) -> u64 {
+        fn calculate_interest(&self, amount: u128, interest_rate: u128, timestamp: u128) -> Balance {
             let ct: u64 = self.env().block_timestamp();
-            let exp: u64 = ct - timestamp;
+            let exp: u128 = ct as u128 - timestamp;
 
-            let interest: u64 = amount * interest_rate * exp / 3_153_6000;
+            let interest: u128 = amount * interest_rate * exp / 3_153_6000;
             interest
         }
     }
