@@ -14,6 +14,15 @@ mod assetmanager {
         Lazy,
     };
     use scale::{Decode, Encode};
+
+    #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
+    #[cfg_attr(feature = "std", derive(StorageLayout))]
+    pub struct AddressManager {
+        interest_rate: u64,
+        transfer_rate: u64,
+        enabled: bool,
+    }
+
     #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
     #[cfg_attr(feature = "std", derive(StorageLayout))]
     pub struct Administration {
@@ -163,7 +172,7 @@ mod assetmanager {
             // Handles borrowing
             let db_transfer =
                 self.handle_borrow(caller, token_id, interest_rate, transfer_rate, current_time);
-            assert_eq!(db_transfer.is_ok(), "Error storing transaction");
+            assert_eq!(db_transfer.is_ok(), true, "Error storing transaction");
 
             let erc721_transfer = self.erc721.transfer_from(caller, owner, token_id);
             assert_eq!(
@@ -198,7 +207,7 @@ mod assetmanager {
             let db_transfer = self.handle_repayment(on_behalf_of, token_id, current_time);
             assert_eq!(db_transfer.is_ok(), true, "Error storing transaction");
 
-            let total_balance = self.get_total_balance(caller);
+            let total_balance = self.get_total_balance(on_behalf_of);
             let erc20_amount = total_balance;
 
             let erc20_transfer = self.erc20.transfer_from(caller, owner, erc20_amount);
