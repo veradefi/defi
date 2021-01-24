@@ -31,6 +31,7 @@ mod assetmanager {
         NoSuchLoan,
         ERC721TransferFailed,
         ERC20TransferFailed,
+        InsufficientBalance,
     }
 
     #[derive(Clone, Default, Encode, Decode, Debug, SpreadLayout, PackedLayout)]
@@ -141,30 +142,38 @@ mod assetmanager {
             instance
         }
 
+        // Allows borrowing on behalf of another account
+        // caller should have granted approval to erc721 token before executing this function
         #[ink(message)]
-        pub fn borrow(&mut self, token_id: u32) -> Result<(), Error> {
+        pub fn deposit(&mut self, token_id: u32, on_behalf_of: AccountId) -> Result<(), Error> {
+            assert_eq!(self.is_enabled(), true, "Borrowing is not enabled");
             let current_time = self.get_current_time();
             let caller = self.env().caller();
+
             let interest_rate = self.get_interest_rate();
             let transfer_rate = self.get_transfer_rate();
-
-            // Validate operation
-            match self.handle_borrow(caller, token_id, interest_rate, transfer_rate, current_time) {
-                Err(e) => return Err(e),
-                Ok(_) => {}
-            };
-
             let owner = self.env().account_id();
             let erc20_amount = Balance::from(transfer_rate);
-            match self.erc721.transfer_from(caller, owner, token_id) {
-                Err(_) => return Err(Error::ERC721TransferFailed),
-                Ok(_) => {}
-            };
 
-            match self.erc20.transfer(caller, erc20_amount) {
-                Err(_) => return Err(Error::ERC20TransferFailed),
-                Ok(_) => {}
-            };
+            // Contract does not have enough erc20 balance for loan
+            if self.erc20.balance_of(owner) < erc20_amount {
+                return Err(Error::InsufficientBalance);
+            }
+
+            // Handles borrowing
+            let db_transfer =
+                self.handle_borrow(caller, token_id, interest_rate, transfer_rate, current_time);
+            assert_eq!(db_transfer.is_ok(), "Error storing transaction");
+
+            let erc721_transfer = self.erc721.transfer_from(caller, owner, token_id);
+            assert_eq!(
+                erc721_transfer.is_ok(),
+                true,
+                "ERC721 Token transfer failed"
+            );
+
+            let erc20_transfer = self.erc20.transfer(on_behalf_of, erc20_amount);
+            assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
             // self.env().emit_event(Borrowed {
             //     asset: asset,
@@ -176,31 +185,32 @@ mod assetmanager {
             Ok(())
         }
 
+        // Allows repayment on behalf of another account
+        // caller should have granted approval to erc20 before executing this function
         #[ink(message)]
-        pub fn repay(&mut self, token_id: u32) -> Result<(), Error> {
+        pub fn withdraw(&mut self, token_id: u32, on_behalf_of: AccountId) -> Result<(), Error> {
             let current_time = self.get_current_time();
             let caller = self.env().caller();
-            let transfer_rate = self.get_transfer_rate();
 
             // Validate operation
             let owner = self.env().account_id();
-            match self.handle_repayment(caller, token_id, current_time) {
-                Err(e) => return Err(e),
-                Ok(_) => {}
-            }
 
-            // let total_balance = self.get_total_balance(caller);
-            let erc20_amount = Balance::from(transfer_rate);
+            let db_transfer = self.handle_repayment(on_behalf_of, token_id, current_time);
+            assert_eq!(db_transfer.is_ok(), true, "Error storing transaction");
 
-            match self.erc721.transfer(caller, token_id) {
-                Err(_) => return Err(Error::ERC721TransferFailed),
-                Ok(_) => {}
-            }
+            let total_balance = self.get_total_balance(caller);
+            let erc20_amount = total_balance;
 
-            match self.erc20.transfer_from(caller, owner, erc20_amount) {
-                Err(_) => return Err(Error::ERC20TransferFailed),
-                Ok(_) => {}
-            }
+            let erc20_transfer = self.erc20.transfer_from(caller, owner, erc20_amount);
+            assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
+
+            let erc721_transfer = self.erc721.transfer(on_behalf_of, token_id);
+            assert_eq!(
+                erc721_transfer.is_ok(),
+                true,
+                "ERC721 Token transfer failed"
+            );
+
             // self.env().emit_event(Repaid {
             //     asset: asset,
             //     user: borrower,
@@ -235,11 +245,8 @@ mod assetmanager {
             }
 
             let borrower = borrower_opt.unwrap();
-            let interest = self.calculate_interest(
-                borrower.balance,
-                interest_rate,
-                borrower.last_updated_at as u128,
-            );
+            let interest =
+                self.calculate_interest(borrower.balance, interest_rate, borrower.last_updated_at);
             interest
         }
 
@@ -342,10 +349,13 @@ mod assetmanager {
             time: u64,
         ) -> Result<(), Error> {
             let borrower_opt = self.borrowers.get_mut(&borrower_address);
+            assert_eq!(borrower_opt.is_some(), true, "Borrower does not exist");
             let loan_opt = self.loans.get_mut(&(borrower_address, token_id));
+            assert_eq!(loan_opt.is_some(), true, "Loan does not exist");
 
-            // assert_eq!(borrower_opt.is_some(), true, "Borrower does not exist");
             let loan = loan_opt.unwrap();
+            assert_eq!(loan.is_repaid, false, "Loan has already been paid");
+
             loan.is_repaid = true;
             loan.date_repaid = Some(time);
 
@@ -371,11 +381,12 @@ mod assetmanager {
         }
 
         // TODO: Calculate compound interest
-        fn calculate_interest(&self, amount: u128, interest_rate: u64, timestamp: u128) -> Balance {
+        fn calculate_interest(&self, amount: u128, interest_rate: u64, timestamp: u64) -> Balance {
             let ct: u64 = self.env().block_timestamp();
-            let exp: u128 = ct as u128 - timestamp;
-
-            let interest: u128 = amount * (interest_rate as u128) * exp / 3_153_6000;
+            let difference_in_secs: u128 = (ct - timestamp) as u128;
+            let seconds_in_year: u128 = 365 * 24 * 60 * 60; // days in year * hours in day * minutes in hour * seconds in minute
+            let difference_in_years: u128 = difference_in_secs / seconds_in_year;
+            let interest: u128 = amount * interest_rate as u128 * difference_in_years;
             interest
         }
 
@@ -395,20 +406,22 @@ mod assetmanager {
         /// We test if the constructor does its job.
         #[ink::test]
         fn new_works() {
-            let assetmanager = AssetManager::new(AccountId::default(), AccountId::default());
+            let assetmanager =
+                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
             assert_eq!(assetmanager.is_enabled(), true);
         }
 
         /// We test a simple use case of our contract.
         #[ink::test]
         fn borrow_works() {
-            let mut assetmanager = AssetManager::new(AccountId::default(), AccountId::default());
+            let mut assetmanager =
+                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
             assert_eq!(assetmanager.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
 
-            assetmanager.borrow(1);
+            assetmanager.deposit(1, owner);
 
             // Borrowed event triggered
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
@@ -421,15 +434,16 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn repay_works() {
-            let mut assetmanager = AssetManager::new(AccountId::default(), AccountId::default());
+            let mut assetmanager =
+                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
             assert_eq!(assetmanager.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
             let owner = AccountId::from([0x01; 32]);
 
-            assetmanager.borrow(1);
+            assetmanager.deposit(1, owner);
 
-            assetmanager.repay(1);
+            assetmanager.withdraw(1, owner);
             // Borrow and Repay events triggered
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
             assert_eq!(2, emitted_events.len());
@@ -441,7 +455,8 @@ mod assetmanager {
         /// We test a simple use case of our contract.
         #[ink::test]
         fn get_principal_balance_works() {
-            let mut assetmanager = AssetManager::new(AccountId::default(), AccountId::default());
+            let mut assetmanager =
+                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
             assert_eq!(assetmanager.is_enabled(), true);
 
             let asset = AccountId::from([0x05; 32]);
@@ -449,17 +464,17 @@ mod assetmanager {
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 0);
 
-            assetmanager.borrow(1);
+            assetmanager.deposit(1, owner);
 
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 2);
 
-            assetmanager.repay(1);
+            assetmanager.withdraw(1, owner);
 
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 1);
 
-            assetmanager.repay(1);
+            assetmanager.withdraw(1, owner);
 
             let balance = assetmanager.get_principal_balance(owner);
             assert_eq!(balance, 0);
