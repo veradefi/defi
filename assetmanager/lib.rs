@@ -90,15 +90,37 @@ mod assetmanager {
     }
 
     #[ink(event)]
-    pub struct Paused {}
+    pub struct Enabled {}
 
     #[ink(event)]
-    pub struct Unpaused {}
+    pub struct Disbaled {}
+
+    #[ink(event)]
+    pub struct InterestRateChanged {
+        #[ink(topic)]
+        old_value: u64,
+        #[ink(topic)]
+        new_value: u64,
+    }
+
+    #[ink(event)]
+    pub struct TransferRateChanged {
+        #[ink(topic)]
+        old_value: u64,
+        #[ink(topic)]
+        new_value: u64,
+    }
 
     impl AssetManager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
-        pub fn new(erc20_address: AccountId, erc721_address: AccountId) -> Self {
+        pub fn new(
+            erc20_address: AccountId,
+            erc721_address: AccountId,
+            interest_rate: u64,
+            transfer_rate: u64,
+            enabled: bool,
+        ) -> Self {
             let owner = Self::env().caller();
 
             let erc20 = Erc20::from_account_id(erc20_address);
@@ -106,9 +128,9 @@ mod assetmanager {
             let instance = Self {
                 owner: owner,
                 administration: Administration {
-                    interest_rate: 10,
-                    transfer_rate: 100,
-                    enabled: true,
+                    interest_rate,
+                    transfer_rate,
+                    enabled,
                 },
                 borrowers: Default::default(),
                 loans: Default::default(),
@@ -223,6 +245,10 @@ mod assetmanager {
 
         #[ink(message)]
         pub fn set_interest_rate(&mut self, _interest_rate: u64) {
+            self.env().emit_event(InterestRateChanged {
+                old_value: self.administration.interest_rate,
+                new_value: _interest_rate,
+            });
             self.administration.interest_rate = _interest_rate;
         }
 
@@ -234,6 +260,10 @@ mod assetmanager {
 
         #[ink(message)]
         pub fn set_transfer_rate(&mut self, _transfer_rate: u64) {
+            self.env().emit_event(TransferRateChanged {
+                old_value: self.administration.transfer_rate,
+                new_value: _transfer_rate,
+            });
             self.administration.transfer_rate = _transfer_rate;
         }
 
@@ -245,11 +275,13 @@ mod assetmanager {
         #[ink(message)]
         pub fn enable(&mut self) {
             self.administration.enabled = true;
+            self.env().emit_event(Enabled {});
         }
 
         #[ink(message)]
         pub fn disable(&mut self) {
             self.administration.enabled = false;
+            self.env().emit_event(Disbaled {});
         }
 
         #[ink(message)]
