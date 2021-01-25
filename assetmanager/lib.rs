@@ -17,6 +17,12 @@ mod assetmanager {
 
     #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
     #[cfg_attr(feature = "std", derive(StorageLayout))]
+    struct Ownable {
+        owner: AccountId,
+    }
+
+    #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
+    #[cfg_attr(feature = "std", derive(StorageLayout))]
     pub struct AddressManager {
         interest_rate: u64,
         transfer_rate: u64,
@@ -68,7 +74,7 @@ mod assetmanager {
     /// to add new static storage fields to your contract.
     #[ink(storage)]
     pub struct AssetManager {
-        owner: AccountId,
+        owner: Ownable,
         borrowers: StorageHashMap<AccountId, Borrower>,
         loans: StorageHashMap<(AccountId, TokenId), Loan>,
         administration: Administration,
@@ -121,6 +127,14 @@ mod assetmanager {
         new_value: u64,
     }
 
+    #[ink(event)]
+    pub struct OwnershipTransferred {
+        #[ink(topic)]
+        from: AccountId,
+        #[ink(topic)]
+        to: AccountId,
+    }
+
     impl AssetManager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
@@ -136,7 +150,7 @@ mod assetmanager {
             let erc20 = Erc20::from_account_id(erc20_address);
             let erc721 = Erc721::from_account_id(erc721_address);
             let instance = Self {
-                owner: owner,
+                owner: Ownable { owner },
                 administration: Administration {
                     interest_rate,
                     transfer_rate,
@@ -149,6 +163,32 @@ mod assetmanager {
                 erc721: Lazy::new(erc721),
             };
             instance
+        }
+
+        #[ink(message)]
+        pub fn is_owner(&self) -> bool {
+            return self.env().caller() == self.owner.owner;
+        }
+
+        #[ink(message)]
+        pub fn get_owner(&self) -> AccountId {
+            self.owner.owner
+        }
+
+        #[ink(message)]
+        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> bool {
+            let caller = self.env().caller();
+            assert!(self.only_owner(caller));
+            self.owner.owner = new_owner;
+            self.env().emit_event(OwnershipTransferred {
+                from: caller,
+                to: new_owner,
+            });
+            true
+        }
+
+        fn only_owner(&self, caller: AccountId) -> bool {
+            caller == self.owner.owner
         }
 
         // Allows borrowing on behalf of another account
@@ -261,6 +301,7 @@ mod assetmanager {
 
         #[ink(message)]
         pub fn set_interest_rate(&mut self, _interest_rate: u64) {
+            assert!(self.only_owner(self.env().caller()));
             self.env().emit_event(InterestRateChanged {
                 old_value: self.administration.interest_rate,
                 new_value: _interest_rate,
@@ -276,6 +317,7 @@ mod assetmanager {
 
         #[ink(message)]
         pub fn set_transfer_rate(&mut self, _transfer_rate: u64) {
+            assert!(self.only_owner(self.env().caller()));
             self.env().emit_event(TransferRateChanged {
                 old_value: self.administration.transfer_rate,
                 new_value: _transfer_rate,
@@ -290,12 +332,14 @@ mod assetmanager {
 
         #[ink(message)]
         pub fn enable(&mut self) {
+            assert!(self.only_owner(self.env().caller()));
             self.administration.enabled = true;
             self.env().emit_event(Enabled {});
         }
 
         #[ink(message)]
         pub fn disable(&mut self) {
+            assert!(self.only_owner(self.env().caller()));
             self.administration.enabled = false;
             self.env().emit_event(Disbaled {});
         }
