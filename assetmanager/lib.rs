@@ -457,81 +457,183 @@ mod assetmanager {
         use super::*;
         use ink_lang as ink;
         /// We test if the constructor does its job.
+        fn instantiate_erc20_contract() -> AccountId {
+            let erc20 = Erc20::new(1000000);
+            let callee =
+                ink_env::account_id::<ink_env::DefaultEnvironment>().unwrap_or([0x0; 32].into());
+            callee
+        }
+        fn instantiate_erc721_contract() -> AccountId {
+            let erc20 = Erc721::new();
+            let callee =
+                ink_env::account_id::<ink_env::DefaultEnvironment>().unwrap_or([0x0; 32].into());
+            callee
+        }
         #[ink::test]
         fn new_works() {
-            let assetmanager =
-                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
+            let assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                10,
+                1000,
+                true,
+            );
             assert_eq!(assetmanager.is_enabled(), true);
+            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_transfer_rate(), 1000);
         }
 
-        /// We test a simple use case of our contract.
         #[ink::test]
-        fn borrow_works() {
-            let mut assetmanager =
-                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
+        fn enable_works() {
+            let mut assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                7,
+                100,
+                false,
+            );
+            assert_eq!(assetmanager.is_enabled(), false);
+            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_transfer_rate(), 100);
+
+            assetmanager.enable();
             assert_eq!(assetmanager.is_enabled(), true);
-
-            let asset = AccountId::from([0x05; 32]);
-            let owner = AccountId::from([0x01; 32]);
-
-            assetmanager.deposit(1, owner);
-
-            // Borrowed event triggered
-            let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-            assert_eq!(1, emitted_events.len());
-
-            let balance = assetmanager.get_principal_balance(owner);
-            assert_eq!(balance, 1);
         }
 
-        /// We test a simple use case of our contract.
         #[ink::test]
-        fn repay_works() {
-            let mut assetmanager =
-                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
+        fn disable_works() {
+            let mut assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                7,
+                100,
+                true,
+            );
             assert_eq!(assetmanager.is_enabled(), true);
+            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_transfer_rate(), 100);
 
-            let asset = AccountId::from([0x05; 32]);
-            let owner = AccountId::from([0x01; 32]);
-
-            assetmanager.deposit(1, owner);
-
-            assetmanager.withdraw(1, owner);
-            // Borrow and Repay events triggered
-            let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-            assert_eq!(2, emitted_events.len());
-
-            let balance = assetmanager.get_principal_balance(owner);
-            assert_eq!(balance, 3);
+            assetmanager.disable();
+            assert_eq!(assetmanager.is_enabled(), false);
         }
 
-        /// We test a simple use case of our contract.
         #[ink::test]
-        fn get_principal_balance_works() {
-            let mut assetmanager =
-                AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
+        fn set_interest_rate_works() {
+            let mut assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                7,
+                100,
+                true,
+            );
+
             assert_eq!(assetmanager.is_enabled(), true);
+            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_transfer_rate(), 100);
 
-            let asset = AccountId::from([0x05; 32]);
-            let owner = AccountId::from([0x01; 32]);
-            let balance = assetmanager.get_principal_balance(owner);
-            assert_eq!(balance, 0);
-
-            assetmanager.deposit(1, owner);
-
-            let balance = assetmanager.get_principal_balance(owner);
-            assert_eq!(balance, 2);
-
-            assetmanager.withdraw(1, owner);
-
-            let balance = assetmanager.get_principal_balance(owner);
-            assert_eq!(balance, 1);
-
-            assetmanager.withdraw(1, owner);
-
-            let balance = assetmanager.get_principal_balance(owner);
-            assert_eq!(balance, 0);
+            assetmanager.set_interest_rate(8_0);
+            assert_eq!(assetmanager.get_interest_rate(), 0);
         }
+
+        #[ink::test]
+        fn set_transfer_rate_works() {
+            let mut assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                7,
+                100,
+                true,
+            );
+
+            assert_eq!(assetmanager.is_enabled(), true);
+            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_transfer_rate(), 100);
+
+            assetmanager.set_transfer_rate(110);
+            assert_eq!(assetmanager.get_transfer_rate(), 110);
+        }
+
+        #[ink::test]
+        #[should_panic]
+        fn borrow_disabled_works() {
+            // Disabled should panic
+            let mut assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                10,
+                1000,
+                false,
+            );
+            assert_eq!(assetmanager.is_enabled(), false);
+            let owner = AccountId::from([0x01; 32]);
+            assert!(
+                assetmanager.deposit(1, owner).is_err(),
+                "Should not allow deposit in disabled state"
+            );
+
+            assetmanager.enable();
+            assert_eq!(assetmanager.is_enabled(), true);
+            assert!(
+                assetmanager.deposit(1, owner).is_err(),
+                "Should not allow deposit when erc721 allowance is not made"
+            );
+
+            // // Borrowed event triggered
+            // let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
+            // assert_eq!(1, emitted_events.len());
+
+            // let balance = assetmanager.get_principal_balance(owner);
+            // assert_eq!(balance, 1);
+        }
+
+        // /// We test a simple use case of our contract.
+        // #[ink::test]
+        // fn repay_works() {
+        //     let mut assetmanager =
+        //         AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
+        //     assert_eq!(assetmanager.is_enabled(), true);
+
+        //     let asset = AccountId::from([0x05; 32]);
+        //     let owner = AccountId::from([0x01; 32]);
+
+        //     assetmanager.deposit(1, owner);
+
+        //     assetmanager.withdraw(1, owner);
+        //     // Borrow and Repay events triggered
+        //     let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
+        //     assert_eq!(2, emitted_events.len());
+
+        //     let balance = assetmanager.get_principal_balance(owner);
+        //     assert_eq!(balance, 3);
+        // }
+
+        // /// We test a simple use case of our contract.
+        // #[ink::test]
+        // fn get_principal_balance_works() {
+        //     let mut assetmanager =
+        //         AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
+        //     assert_eq!(assetmanager.is_enabled(), true);
+
+        //     let asset = AccountId::from([0x05; 32]);
+        //     let owner = AccountId::from([0x01; 32]);
+        //     let balance = assetmanager.get_principal_balance(owner);
+        //     assert_eq!(balance, 0);
+
+        //     assetmanager.deposit(1, owner);
+
+        //     let balance = assetmanager.get_principal_balance(owner);
+        //     assert_eq!(balance, 2);
+
+        //     assetmanager.withdraw(1, owner);
+
+        //     let balance = assetmanager.get_principal_balance(owner);
+        //     assert_eq!(balance, 1);
+
+        //     assetmanager.withdraw(1, owner);
+
+        //     let balance = assetmanager.get_principal_balance(owner);
+        //     assert_eq!(balance, 0);
+        // }
 
         // /// We test a simple use case of our contract.
         // #[ink::test]
