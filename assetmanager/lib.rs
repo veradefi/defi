@@ -13,6 +13,7 @@ mod assetmanager {
         traits::{PackedLayout, SpreadLayout, StorageLayout},
         Lazy,
     };
+    use num_traits::Pow;
     use scale::{Decode, Encode};
 
     #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
@@ -247,7 +248,7 @@ mod assetmanager {
             let db_transfer = self.handle_repayment(on_behalf_of, token_id, current_time);
             assert_eq!(db_transfer.is_ok(), true, "Error storing transaction");
 
-            let total_balance = self.get_total_balance(on_behalf_of);
+            let total_balance = self.get_total_balance_of_loan(on_behalf_of, token_id);
             let erc20_amount = total_balance;
 
             let erc20_transfer = self.erc20.transfer_from(caller, owner, erc20_amount);
@@ -270,7 +271,7 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn get_principal_balance(&self, owner: AccountId) -> Balance {
+        pub fn get_principal_balance_of_borrower(&self, owner: AccountId) -> Balance {
             let borrower_opt = self.borrowers.get(&owner);
             if borrower_opt.is_some() {
                 return borrower_opt.unwrap().balance;
@@ -279,23 +280,57 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn get_total_balance(&self, owner: AccountId) -> Balance {
-            let balance = self.get_principal_balance(owner);
-            let debt = self.get_total_debt(owner);
+        pub fn get_total_balance_of_borrower(&self, owner: AccountId) -> Balance {
+            let balance = self.get_principal_balance_of_borrower(owner);
+            let debt = self.get_total_debt_of_borrower(owner);
             balance + debt
         }
 
         #[ink(message)]
-        pub fn get_total_debt(&self, owner: AccountId) -> Balance {
+        pub fn get_total_debt_of_borrower(&self, owner: AccountId) -> Balance {
             let borrower_opt = self.borrowers.get(&owner);
-            let interest_rate = self.get_interest_rate();
             if !borrower_opt.is_some() {
                 return 0;
             }
 
             let borrower = borrower_opt.unwrap();
+            let mut interest: u128 = 0;
+            for token_id in borrower.loans.to_vec() {
+                interest = interest + self.get_total_debt_of_loan(owner, token_id);
+            }
+            interest
+        }
+
+        #[ink(message)]
+        pub fn get_principal_balance_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
+            let loan_opt = self.loans.get(&(owner, token_id));
+            if loan_opt.is_some() {
+                return loan_opt.unwrap().amount;
+            }
+            0
+        }
+
+        #[ink(message)]
+        pub fn get_total_balance_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
+            let balance = self.get_principal_balance_of_loan(owner, token_id);
+            let debt = self.get_total_debt_of_loan(owner, token_id);
+            balance + debt
+        }
+
+        #[ink(message)]
+        pub fn get_total_debt_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
+            let loan_opt = self.loans.get(&(owner, token_id));
+            if !loan_opt.is_some() {
+                return 0;
+            }
+            let loan = loan_opt.unwrap();
+            if loan.is_repaid {
+                return 0;
+            }
+            let ct: u64 = self.env().block_timestamp(); // Gets timstamp in milliseconds
+
             let interest =
-                self.calculate_interest(borrower.balance, interest_rate, borrower.last_updated_at);
+                self.calculate_interest(loan.amount, loan.interest_rate, ct, loan.date_borrowed);
             interest
         }
 
@@ -311,8 +346,7 @@ mod assetmanager {
 
         #[ink(message)]
         pub fn get_interest_rate(&self) -> u64 {
-            0
-            // self.administration.interest_rate
+            self.administration.interest_rate
         }
 
         #[ink(message)]
@@ -433,14 +467,27 @@ mod assetmanager {
             Ok(*loan.clone().unwrap())
         }
 
-        // TODO: Calculate compound interest
-        fn calculate_interest(&self, amount: u128, interest_rate: u64, timestamp: u64) -> Balance {
-            let ct: u64 = self.env().block_timestamp();
-            let difference_in_secs: u128 = (ct - timestamp) as u128;
-            let seconds_in_year: u128 = 365 * 24 * 60 * 60; // days in year * hours in day * minutes in hour * seconds in minute
-            let difference_in_years: u128 = difference_in_secs / seconds_in_year;
-            let interest: u128 = amount * interest_rate as u128 * difference_in_years;
-            interest
+        fn calculate_interest(
+            &self,
+            amount: u128,
+            interest_rate: u64,
+            current_timestamp: u64,
+            date_borrowed: u64,
+        ) -> Balance {
+            let difference_in_secs: u128 =
+                ((current_timestamp - date_borrowed) as u128 / 1000_u128).into(); // Total time elapsed in seconds
+            let secs_in_day: u128 = 24 * 60 * 60;
+            let difference_in_days: u128 = difference_in_secs / secs_in_day;
+            let mut days_since_borrowed = difference_in_days;
+            if difference_in_secs - (difference_in_days * days_since_borrowed) > 0 {
+                days_since_borrowed = days_since_borrowed + 1;
+            }
+            let interest: f64 = (amount as f64)
+                * Pow::pow(
+                    1_f64 + ((interest_rate as f64) / 100_f64) / 365_f64,
+                    days_since_borrowed as f64,
+                );
+            (interest - amount as f64) as u128
         }
 
         fn get_current_time(&self) -> u64 {
@@ -479,7 +526,7 @@ mod assetmanager {
                 true,
             );
             assert_eq!(assetmanager.is_enabled(), true);
-            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_interest_rate(), 10);
             assert_eq!(assetmanager.get_transfer_rate(), 1000);
         }
 
@@ -493,7 +540,7 @@ mod assetmanager {
                 false,
             );
             assert_eq!(assetmanager.is_enabled(), false);
-            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_interest_rate(), 7);
             assert_eq!(assetmanager.get_transfer_rate(), 100);
 
             assetmanager.enable();
@@ -510,7 +557,7 @@ mod assetmanager {
                 true,
             );
             assert_eq!(assetmanager.is_enabled(), true);
-            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_interest_rate(), 7);
             assert_eq!(assetmanager.get_transfer_rate(), 100);
 
             assetmanager.disable();
@@ -528,11 +575,11 @@ mod assetmanager {
             );
 
             assert_eq!(assetmanager.is_enabled(), true);
-            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_interest_rate(), 7);
             assert_eq!(assetmanager.get_transfer_rate(), 100);
 
-            assetmanager.set_interest_rate(8_0);
-            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assetmanager.set_interest_rate(8);
+            assert_eq!(assetmanager.get_interest_rate(), 8);
         }
 
         #[ink::test]
@@ -546,7 +593,7 @@ mod assetmanager {
             );
 
             assert_eq!(assetmanager.is_enabled(), true);
-            assert_eq!(assetmanager.get_interest_rate(), 0);
+            assert_eq!(assetmanager.get_interest_rate(), 7);
             assert_eq!(assetmanager.get_transfer_rate(), 100);
 
             assetmanager.set_transfer_rate(110);
@@ -577,73 +624,70 @@ mod assetmanager {
                 assetmanager.deposit(1, owner).is_err(),
                 "Should not allow deposit when erc721 allowance is not made"
             );
-
-            // // Borrowed event triggered
-            // let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-            // assert_eq!(1, emitted_events.len());
-
-            // let balance = assetmanager.get_principal_balance(owner);
-            // assert_eq!(balance, 1);
         }
 
-        // /// We test a simple use case of our contract.
-        // #[ink::test]
-        // fn repay_works() {
-        //     let mut assetmanager =
-        //         AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
-        //     assert_eq!(assetmanager.is_enabled(), true);
+        #[ink::test]
+        fn calculate_interest_works() {
+            let assetmanager = AssetManager::new(
+                instantiate_erc20_contract(),
+                instantiate_erc721_contract(),
+                10,
+                1000,
+                true,
+            );
+            assert_eq!(assetmanager.is_enabled(), true);
 
-        //     let asset = AccountId::from([0x05; 32]);
-        //     let owner = AccountId::from([0x01; 32]);
+            let erc20_decimals = 1000_000_000_000;
 
-        //     assetmanager.deposit(1, owner);
+            assert_eq!(
+                assetmanager.calculate_interest(
+                    1 * erc20_decimals,
+                    10,
+                    86400 * 365 * 1000,
+                    86400 * 1000
+                ),
+                105_155_781_616
+            ); // Total 365 day borrowed with yearly interest rate of 10
 
-        //     assetmanager.withdraw(1, owner);
-        //     // Borrow and Repay events triggered
-        //     let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-        //     assert_eq!(2, emitted_events.len());
+            assert_eq!(
+                assetmanager.calculate_interest(
+                    1 * erc20_decimals,
+                    10,
+                    86400 * 30 * 1000,
+                    86400 * 1000
+                ),
+                8_251_913_258
+            ); // Total 30 day borrowed with yearly interest rate of 10
 
-        //     let balance = assetmanager.get_principal_balance(owner);
-        //     assert_eq!(balance, 3);
-        // }
+            assert_eq!(
+                assetmanager.calculate_interest(
+                    1 * erc20_decimals,
+                    10,
+                    86400 * 182 * 1000,
+                    86400 * 1000
+                ),
+                51_119_918_059
+            ); // Total 6 month (182 days) borrowed with yearly interest rate of 10
 
-        // /// We test a simple use case of our contract.
-        // #[ink::test]
-        // fn get_principal_balance_works() {
-        //     let mut assetmanager =
-        //         AssetManager::new(AccountId::default(), AccountId::default(), 10, 1000, true);
-        //     assert_eq!(assetmanager.is_enabled(), true);
+            assert_eq!(
+                assetmanager.calculate_interest(
+                    1 * erc20_decimals,
+                    7,
+                    86400 * 365 * 1000,
+                    86400 * 1000
+                ),
+                72_500_983_171
+            ); // Total 1 year borrowed with yearly interest rate of 7
 
-        //     let asset = AccountId::from([0x05; 32]);
-        //     let owner = AccountId::from([0x01; 32]);
-        //     let balance = assetmanager.get_principal_balance(owner);
-        //     assert_eq!(balance, 0);
+            assert_eq!(
+                assetmanager.calculate_interest(1 * erc20_decimals, 7, 86401 * 1000, 86400 * 1000),
+                191_780_821
+            ); // Total 1 day borrowed with yearly interest rate of 7
 
-        //     assetmanager.deposit(1, owner);
-
-        //     let balance = assetmanager.get_principal_balance(owner);
-        //     assert_eq!(balance, 2);
-
-        //     assetmanager.withdraw(1, owner);
-
-        //     let balance = assetmanager.get_principal_balance(owner);
-        //     assert_eq!(balance, 1);
-
-        //     assetmanager.withdraw(1, owner);
-
-        //     let balance = assetmanager.get_principal_balance(owner);
-        //     assert_eq!(balance, 0);
-        // }
-
-        // /// We test a simple use case of our contract.
-        // #[ink::test]
-        // fn get_total_debt_works() {
-        //     let assetmanager = AssetManager::new();
-        //     assert_eq!(assetmanager.config.enabled, true);
-
-        //     let owner = AccountId::from([0x01; 32]);
-        //     let balance = assetmanager.get_total_debt(owner);
-        //     assert_eq!(balance, 0);
-        // }
+            assert_eq!(
+                assetmanager.calculate_interest(2 * erc20_decimals, 7, 86401 * 1000, 86400 * 1000),
+                383_561_643
+            ); // Total 1 day borrowed with yearly interest rate of 7
+        }
     }
 }
