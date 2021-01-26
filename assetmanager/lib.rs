@@ -13,7 +13,6 @@ mod assetmanager {
         traits::{PackedLayout, SpreadLayout, StorageLayout},
         Lazy,
     };
-    use num_traits::Pow;
     use scale::{Decode, Encode};
 
     #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
@@ -245,10 +244,10 @@ mod assetmanager {
             // Validate operation
             let owner = self.env().account_id();
 
+            let total_balance = self.get_total_balance_of_loan(on_behalf_of, token_id);
             let db_transfer = self.handle_repayment(on_behalf_of, token_id, current_time);
             assert_eq!(db_transfer.is_ok(), true, "Error storing transaction");
 
-            let total_balance = self.get_total_balance_of_loan(on_behalf_of, token_id);
             let erc20_amount = total_balance;
 
             let erc20_transfer = self.erc20.transfer_from(caller, owner, erc20_amount);
@@ -305,7 +304,10 @@ mod assetmanager {
         pub fn get_principal_balance_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
             let loan_opt = self.loans.get(&(owner, token_id));
             if loan_opt.is_some() {
-                return loan_opt.unwrap().amount;
+                let loan = loan_opt.unwrap();
+                if !loan.is_repaid {
+                    return loan.amount;
+                }
             }
             0
         }
@@ -482,12 +484,25 @@ mod assetmanager {
             if difference_in_secs - (difference_in_days * days_since_borrowed) > 0 {
                 days_since_borrowed = days_since_borrowed + 1;
             }
-            let interest: f64 = (amount as f64)
-                * Pow::pow(
-                    1_f64 + ((interest_rate as f64) / 100_f64) / 365_f64,
-                    days_since_borrowed as f64,
-                );
-            (interest - amount as f64) as u128
+
+            let mut s = 0;
+            let mut n = 1;
+            let mut b = 1;
+            let q: u128 = 365 * 100 / interest_rate as u128;
+
+            // let mut p = 8_u32;
+            // if p < days_since_borrowed as u32 {
+            //     p = days_since_borrowed as u32;
+            // }
+            for x in 0..8 {
+                s = s + amount * n / b / (q.pow(x));
+                if days_since_borrowed < x.into() {
+                    break;
+                }
+                n = n * (days_since_borrowed - x as u128);
+                b = b * (x as u128 + 1);
+            }
+            s - amount
         }
 
         fn get_current_time(&self) -> u64 {
@@ -646,7 +661,7 @@ mod assetmanager {
                     86400 * 365 * 1000,
                     86400 * 1000
                 ),
-                105_155_781_616
+                105_155_781_613
             ); // Total 365 day borrowed with yearly interest rate of 10
 
             assert_eq!(
@@ -656,7 +671,7 @@ mod assetmanager {
                     86400 * 30 * 1000,
                     86400 * 1000
                 ),
-                8_251_913_258
+                8_251_913_257
             ); // Total 30 day borrowed with yearly interest rate of 10
 
             assert_eq!(
@@ -666,7 +681,7 @@ mod assetmanager {
                     86400 * 182 * 1000,
                     86400 * 1000
                 ),
-                51_119_918_059
+                51_119_918_056
             ); // Total 6 month (182 days) borrowed with yearly interest rate of 10
 
             assert_eq!(
@@ -676,17 +691,17 @@ mod assetmanager {
                     86400 * 365 * 1000,
                     86400 * 1000
                 ),
-                72_500_983_171
+                72_505_096_314
             ); // Total 1 year borrowed with yearly interest rate of 7
 
             assert_eq!(
                 assetmanager.calculate_interest(1 * erc20_decimals, 7, 86401 * 1000, 86400 * 1000),
-                191_780_821
+                191_791_331
             ); // Total 1 day borrowed with yearly interest rate of 7
 
             assert_eq!(
                 assetmanager.calculate_interest(2 * erc20_decimals, 7, 86401 * 1000, 86400 * 1000),
-                383_561_643
+                383_582_662
             ); // Total 1 day borrowed with yearly interest rate of 7
         }
     }

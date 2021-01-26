@@ -16,7 +16,6 @@ scale = { package = "parity-scale-codec", version = "1.3", default-features = fa
 erc20 = { version = "0.1.0", path = "erc20", default-features = false, features = ["ink-as-dependency"] }
 erc721 = { version = "0.1.0", path = "erc721", default-features = false, features = ["ink-as-dependency"] }
 scale-info = { version = "0.4.1", default-features = false, features = ["derive"], optional = true }
-num-traits = {version="0.2.14"}
 
 [lib]
 name = "assetmanager"
@@ -40,3 +39,6 @@ std = [
     "erc721/std",
 ]
 ink-as-dependency = []
+
+[profile.release] 
+overflow-checks = false
