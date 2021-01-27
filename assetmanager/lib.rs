@@ -24,9 +24,10 @@ mod assetmanager {
     #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
     #[cfg_attr(feature = "std", derive(StorageLayout))]
     pub struct AddressManager {
-        interest_rate: u64,
-        transfer_rate: u64,
-        enabled: bool,
+        erc20_address: AccountId,
+        erc721_address: AccountId,
+        erc20_owner: AccountId,
+        erc721_owner: AccountId,
     }
 
     #[derive(Encode, Decode, Debug, Default, Copy, Clone, SpreadLayout)]
@@ -78,6 +79,7 @@ mod assetmanager {
         borrowers: StorageHashMap<AccountId, Borrower>,
         loans: StorageHashMap<(AccountId, TokenId), Loan>,
         administration: Administration,
+        address_manager: AddressManager,
         total_loans: u64,
         erc20: Lazy<Erc20>,
         erc721: Lazy<Erc721>,
@@ -154,6 +156,12 @@ mod assetmanager {
                     transfer_rate,
                     enabled,
                 },
+                address_manager: AddressManager {
+                    erc20_address: erc20_address,
+                    erc721_address: erc721_address,
+                    erc20_owner: owner,
+                    erc721_owner: owner,
+                },
                 borrowers: Default::default(),
                 loans: Default::default(),
                 total_loans: 0,
@@ -189,6 +197,28 @@ mod assetmanager {
             caller == self.owner.owner
         }
 
+        #[ink(message)]
+        pub fn set_erc20_owner(&mut self, erc20_owner: AccountId) {
+            assert!(self.only_owner(self.env().caller()));
+            self.address_manager.erc20_owner = erc20_owner;
+        }
+
+        #[ink(message)]
+        pub fn get_erc20_owner(&self) -> AccountId {
+            self.address_manager.erc20_owner
+        }
+
+        #[ink(message)]
+        pub fn set_erc721_owner(&mut self, erc721_owner: AccountId) {
+            assert!(self.only_owner(self.env().caller()));
+            self.address_manager.erc721_owner = erc721_owner;
+        }
+
+        #[ink(message)]
+        pub fn get_erc721_owner(&self) -> AccountId {
+            self.address_manager.erc721_owner
+        }
+
         // Allows borrowing on behalf of another account
         // caller should have granted approval to erc721 token before executing this function
         #[ink(message)]
@@ -199,11 +229,16 @@ mod assetmanager {
 
             let interest_rate = self.get_interest_rate();
             let transfer_rate = self.get_transfer_rate();
-            let owner = self.env().account_id();
+            let AddressManager {
+                erc20_owner,
+                erc721_owner,
+                ..
+            } = self.address_manager;
+
             let erc20_amount = Balance::from(transfer_rate);
 
             // Contract does not have enough erc20 balance for loan
-            if self.erc20.balance_of(owner) < erc20_amount {
+            if self.erc20.balance_of(erc20_owner) < erc20_amount {
                 return Err(Error::InsufficientBalance);
             }
 
@@ -212,14 +247,16 @@ mod assetmanager {
                 self.handle_borrow(caller, token_id, interest_rate, transfer_rate, current_time);
             assert_eq!(db_transfer.is_ok(), true, "Error storing transaction");
 
-            let erc721_transfer = self.erc721.transfer_from(caller, owner, token_id);
+            let erc721_transfer = self.erc721.transfer_from(caller, erc721_owner, token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
                 "ERC721 Token transfer failed"
             );
 
-            let erc20_transfer = self.erc20.transfer(on_behalf_of, erc20_amount);
+            let erc20_transfer = self
+                .erc20
+                .transfer_from(erc20_owner, on_behalf_of, erc20_amount);
             assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
             self.env().emit_event(Borrowed {
@@ -240,7 +277,11 @@ mod assetmanager {
             let caller = self.env().caller();
 
             // Validate operation
-            let owner = self.env().account_id();
+            let AddressManager {
+                erc20_owner,
+                erc721_owner,
+                ..
+            } = self.address_manager;
 
             let total_balance = self.get_total_balance_of_loan(on_behalf_of, token_id);
             let db_transfer = self.handle_repayment(on_behalf_of, token_id, current_time);
@@ -248,10 +289,12 @@ mod assetmanager {
 
             let erc20_amount = total_balance;
 
-            let erc20_transfer = self.erc20.transfer_from(caller, owner, erc20_amount);
+            let erc20_transfer = self.erc20.transfer_from(caller, erc20_owner, erc20_amount);
             assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
-            let erc721_transfer = self.erc721.transfer(on_behalf_of, token_id);
+            let erc721_transfer = self
+                .erc721
+                .transfer_from(erc721_owner, on_behalf_of, token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
