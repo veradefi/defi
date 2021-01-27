@@ -33,7 +33,7 @@ mod assetmanager {
     #[cfg_attr(feature = "std", derive(StorageLayout))]
     pub struct Administration {
         interest_rate: u64,
-        transfer_rate: u64,
+        transfer_rate: u128,
         enabled: bool,
     }
 
@@ -62,7 +62,7 @@ mod assetmanager {
     pub struct Loan {
         id: LoanId,
         amount: Balance,
-        transfer_rate: u64,
+        transfer_rate: u128,
         interest_rate: u64,
         date_borrowed: u64,
         date_repaid: Option<u64>,
@@ -86,23 +86,21 @@ mod assetmanager {
     #[ink(event)]
     pub struct Borrowed {
         #[ink(topic)]
-        asset: AccountId,
+        borrower: AccountId,
         #[ink(topic)]
-        user: AccountId,
-        #[ink(topic)]
-        amount: u64,
+        amount: Balance,
         #[ink(topic)]
         borrow_rate: u64,
+        token_id: u32,
     }
 
     #[ink(event)]
     pub struct Repaid {
         #[ink(topic)]
-        asset: AccountId,
+        borrower: AccountId,
         #[ink(topic)]
-        user: AccountId,
-        #[ink(topic)]
-        amount: u64,
+        amount: Balance,
+        token_id: u32,
     }
 
     #[ink(event)]
@@ -122,9 +120,9 @@ mod assetmanager {
     #[ink(event)]
     pub struct TransferRateChanged {
         #[ink(topic)]
-        old_value: u64,
+        old_value: Balance,
         #[ink(topic)]
-        new_value: u64,
+        new_value: Balance,
     }
 
     #[ink(event)]
@@ -142,7 +140,7 @@ mod assetmanager {
             erc20_address: AccountId,
             erc721_address: AccountId,
             interest_rate: u64,
-            transfer_rate: u64,
+            transfer_rate: Balance,
             enabled: bool,
         ) -> Self {
             let owner = Self::env().caller();
@@ -224,12 +222,12 @@ mod assetmanager {
             let erc20_transfer = self.erc20.transfer(on_behalf_of, erc20_amount);
             assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
-            // self.env().emit_event(Borrowed {
-            //     asset: asset,
-            //     user: borrower,
-            //     amount: amount,
-            //     borrow_rate: interest_rate,
-            // });
+            self.env().emit_event(Borrowed {
+                borrower: on_behalf_of,
+                amount: erc20_amount,
+                borrow_rate: interest_rate,
+                token_id: token_id,
+            });
 
             Ok(())
         }
@@ -260,11 +258,11 @@ mod assetmanager {
                 "ERC721 Token transfer failed"
             );
 
-            // self.env().emit_event(Repaid {
-            //     asset: asset,
-            //     user: borrower,
-            //     amount: amount,
-            // });
+            self.env().emit_event(Repaid {
+                borrower: on_behalf_of,
+                amount: erc20_amount,
+                token_id: token_id,
+            });
 
             Ok(())
         }
@@ -352,7 +350,7 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn set_transfer_rate(&mut self, _transfer_rate: u64) {
+        pub fn set_transfer_rate(&mut self, _transfer_rate: Balance) {
             assert!(self.only_owner(self.env().caller()));
             self.env().emit_event(TransferRateChanged {
                 old_value: self.administration.transfer_rate,
@@ -362,7 +360,7 @@ mod assetmanager {
         }
 
         #[ink(message)]
-        pub fn get_transfer_rate(&self) -> u64 {
+        pub fn get_transfer_rate(&self) -> Balance {
             self.administration.transfer_rate
         }
 
@@ -390,7 +388,7 @@ mod assetmanager {
             borrower_address: AccountId,
             token_id: TokenId,
             interest_rate: u64,
-            transfer_rate: u64,
+            transfer_rate: Balance,
             time: u64,
         ) -> Result<(), Error> {
             let borrower_opt = self.borrowers.get(&borrower_address);
