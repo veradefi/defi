@@ -171,16 +171,20 @@ mod assetmanager {
             instance
         }
 
+        /// Checks if caller is owner of AssetManager contract
         #[ink(message)]
         pub fn is_owner(&self) -> bool {
             return self.env().caller() == self.owner.owner;
         }
 
+        /// Gets owner address of AssetManager contract
         #[ink(message)]
         pub fn get_owner(&self) -> AccountId {
             self.owner.owner
         }
 
+        /// Transfers ownership from current owner to new_owner address
+        /// Can only be called by the current owner
         #[ink(message)]
         pub fn transfer_ownership(&mut self, new_owner: AccountId) -> bool {
             let caller = self.env().caller();
@@ -197,30 +201,35 @@ mod assetmanager {
             caller == self.owner.owner
         }
 
+        /// Sets owner address of erc20 contract
         #[ink(message)]
         pub fn set_erc20_owner(&mut self, erc20_owner: AccountId) {
             assert!(self.only_owner(self.env().caller()));
             self.address_manager.erc20_owner = erc20_owner;
         }
 
+        /// Returns owner address of erc20 contract
         #[ink(message)]
         pub fn get_erc20_owner(&self) -> AccountId {
             self.address_manager.erc20_owner
         }
 
+        /// Sets owner address of erc721 contract
         #[ink(message)]
         pub fn set_erc721_owner(&mut self, erc721_owner: AccountId) {
             assert!(self.only_owner(self.env().caller()));
             self.address_manager.erc721_owner = erc721_owner;
         }
 
+        /// Returns owner address of erc721 contract
         #[ink(message)]
         pub fn get_erc721_owner(&self) -> AccountId {
             self.address_manager.erc721_owner
         }
 
-        // Allows borrowing on behalf of another account
-        // caller should have granted approval to erc721 token before executing this function
+        /// Allows borrowing on behalf of another account
+        /// erc20_owner should have granted approval to assetmanager contract to make transfer on their behalf and have sufficient balance
+        /// Caller should have granted approval to erc721 token before executing this function
         #[ink(message)]
         pub fn deposit(&mut self, token_id: u32, on_behalf_of: AccountId) -> Result<(), Error> {
             assert_eq!(self.is_enabled(), true, "Borrowing is not enabled");
@@ -259,18 +268,19 @@ mod assetmanager {
                 .transfer_from(erc20_owner, on_behalf_of, erc20_amount);
             assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
-            self.env().emit_event(Borrowed {
-                borrower: on_behalf_of,
-                amount: erc20_amount,
-                borrow_rate: interest_rate,
-                token_id: token_id,
-            });
+            // self.env().emit_event(Borrowed {
+            //     borrower: on_behalf_of,
+            //     amount: erc20_amount,
+            //     borrow_rate: interest_rate,
+            //     token_id: token_id,
+            // });
 
             Ok(())
         }
 
         // Allows repayment on behalf of another account
-        // caller should have granted approval to erc20 before executing this function
+        /// erc721_owner should have granted approval to assetmanager contract to make transfer on their behalf
+        // Caller should have granted approval to erc20 before executing this function
         #[ink(message)]
         pub fn withdraw(&mut self, token_id: u32, on_behalf_of: AccountId) -> Result<(), Error> {
             let current_time = self.get_current_time();
@@ -301,15 +311,16 @@ mod assetmanager {
                 "ERC721 Token transfer failed"
             );
 
-            self.env().emit_event(Repaid {
-                borrower: on_behalf_of,
-                amount: erc20_amount,
-                token_id: token_id,
-            });
+            // self.env().emit_event(Repaid {
+            //     borrower: on_behalf_of,
+            //     amount: erc20_amount,
+            //     token_id: token_id,
+            // });
 
             Ok(())
         }
 
+        /// Returns principal amount borrowed by the address
         #[ink(message)]
         pub fn get_principal_balance_of_borrower(&self, owner: AccountId) -> Balance {
             let borrower_opt = self.borrowers.get(&owner);
@@ -319,6 +330,7 @@ mod assetmanager {
             0
         }
 
+        /// Returns total amount borrowed including interest by the address
         #[ink(message)]
         pub fn get_total_balance_of_borrower(&self, owner: AccountId) -> Balance {
             let balance = self.get_principal_balance_of_borrower(owner);
@@ -326,6 +338,7 @@ mod assetmanager {
             balance + debt
         }
 
+        /// Returns total interest incurred by the address
         #[ink(message)]
         pub fn get_total_debt_of_borrower(&self, owner: AccountId) -> Balance {
             let borrower_opt = self.borrowers.get(&owner);
@@ -341,6 +354,7 @@ mod assetmanager {
             interest
         }
 
+        /// Returns principal amount borrowed against by address against token_id
         #[ink(message)]
         pub fn get_principal_balance_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
             let loan_opt = self.loans.get(&(owner, token_id));
@@ -353,12 +367,15 @@ mod assetmanager {
             0
         }
 
+        /// Returns total amount including interest borrowed against by address against token_id
         #[ink(message)]
         pub fn get_total_balance_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
             let balance = self.get_principal_balance_of_loan(owner, token_id);
             let debt = self.get_total_debt_of_loan(owner, token_id);
             balance + debt
         }
+
+        /// Returns interest incurred against by address against token_id
 
         #[ink(message)]
         pub fn get_total_debt_of_loan(&self, owner: AccountId, token_id: u32) -> Balance {
@@ -377,6 +394,8 @@ mod assetmanager {
             interest
         }
 
+        /// Allows owner to set interest rate
+        /// Only affects future borrowing
         #[ink(message)]
         pub fn set_interest_rate(&mut self, _interest_rate: u64) {
             assert!(self.only_owner(self.env().caller()));
@@ -387,11 +406,14 @@ mod assetmanager {
             self.administration.interest_rate = _interest_rate;
         }
 
+        /// Returns current yearly interest rate
         #[ink(message)]
         pub fn get_interest_rate(&self) -> u64 {
             self.administration.interest_rate
         }
 
+        /// Allows owner to set transfer rate
+        /// Only affects future borrowing
         #[ink(message)]
         pub fn set_transfer_rate(&mut self, _transfer_rate: Balance) {
             assert!(self.only_owner(self.env().caller()));
@@ -402,11 +424,13 @@ mod assetmanager {
             self.administration.transfer_rate = _transfer_rate;
         }
 
+        /// Returns current transfer rate
         #[ink(message)]
         pub fn get_transfer_rate(&self) -> Balance {
             self.administration.transfer_rate
         }
 
+        /// Allows owner to enable borrowing
         #[ink(message)]
         pub fn enable(&mut self) {
             assert!(self.only_owner(self.env().caller()));
@@ -414,6 +438,7 @@ mod assetmanager {
             self.env().emit_event(Enabled {});
         }
 
+        /// Allows owner to disable borrowing
         #[ink(message)]
         pub fn disable(&mut self) {
             assert!(self.only_owner(self.env().caller()));
@@ -421,6 +446,7 @@ mod assetmanager {
             self.env().emit_event(Disbaled {});
         }
 
+        /// Checks if borrowing is enabled
         #[ink(message)]
         pub fn is_enabled(&self) -> bool {
             self.administration.enabled
