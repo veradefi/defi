@@ -3,16 +3,15 @@
 
 ### Core Functionality ###
 
-Desired functionality 
 
-Create these smart contracts: 
+-Implementation of ERC20:     VT Token
 
--ERC20    VT Token
+-Implementation of ERC721:    AssetToken
 
--ERC721   AssetToken
+-Implementation of AssetManager Contract
 
--AssetManager Contract
 
+### Transaction flow overview ###
 Owner of 721 Token deposit asset worth X VT to the manage using AssetManager->Deposit Function
 
 AssetManager send X VT Token to Owner as loan, loan balance increase daily by interest. 
@@ -39,5 +38,5 @@ Day 2 Bob loan balance 100.05
 
 Day 2 Bob loan balance 100.100025
 
-When Bob pays back the balance the asset is returned. 
+When Bob pays back the balance the asset is released. 
 
