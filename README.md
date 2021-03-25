@@ -3,20 +3,17 @@
 
 ###  Functionality ###
 
-
--Implementation of ERC20:     VT Token
-
--Implementation of ERC721:    AssetToken
-
+-Implementation of ERC20: Vera Token (VT)
+-Implementation of ERC721: AssetToken
 -Implementation of AssetManager Contract
 
 
 ### Transaction flow overview ###
-Owner of 721 Token deposit asset worth X VT to the manage using AssetManager->Deposit Function
+The owner of 721 Token deposits an asset worth X VT to the manager using the AssetManager->Deposit Function
 
-AssetManager send X VT Token to Owner as loan, loan balance increase daily by interest. 
+AssetManager sends X VT to the Owner as a loan and the loan balance increases daily due to accumulated interest. 
 
-When owner pay back the loan AssetManager send asset x123 back to Owner
+When the Owner pays back the loan, AssetManager sends the asset x123 back to the Owner.
 
 ### Example ###
 
@@ -26,24 +23,23 @@ AssetManager walletM
 
 Bob owns 721 token x123 worth 100 VT
 
-Bob deposit x123 to AssetManager walletM
+Bob deposits x123 to AssetManager walletM
 
-AssetManager send 100 VT to walletB
+AssetManager sends 100 VT to walletB
 
-Daily interest 0.05
+Daily interest is 0.05 VT
 
-Day 1 Bob loan balance 100
+Day 1 Bob's loan balance = 100 VT
 
-Day 2 Bob loan balance 100.05
+Day 2 Bob's loan balance = 100.05 VT
 
-Day 2 Bob loan balance 100.100025
+Day 2 Bob loan balance 100.100025 VT
 
-When Bob pays back the balance the asset is released. 
+When Bob pays back the balance, the asset is released. 
 
 ### Smart Contract Deployment ###
 
-
-1. Upload contract metadata and wasm (.contract files) for erc20, erc721 and assetmanager
+1. Upload contract metadata and wasm (.contract files) for erc20, erc721 and AssetManager
 
 2. Instantiate erc20 and erc721 contracts first using Alice as owner. erc20 initial supply is set to 1 billion units and both contracts get 10 units endowment.
 
