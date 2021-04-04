@@ -37,6 +37,20 @@ Day 2 Bob loan balance 100.100025 VT
 
 When Bob pays back the balance, the asset is released. 
 
+## Development
+
+### Build
+
+```
+cargo build
+```
+
+### Test
+
+```
+cargo test
+```
+
 ### Smart Contract Deployment ###
 
 1. Upload contract metadata and wasm (.contract files) for erc20, erc721 and AssetManager
