@@ -40,7 +40,14 @@ mod leasingmanager {
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
-        NoSuchToken,
+        LeasingNotEnabled,
+        NoSuchLease,
+        LeaseUnavailable,
+        LeaseNotRented,
+        NotInvestor,
+        NotOwner,
+        LeaseNotDefault,
+        LeaseNotOver,
         ERC721TransferFailed,
         ERC20TransferFailed,
         InsufficientBalance,
@@ -60,6 +67,7 @@ mod leasingmanager {
         created_at: u64,
         leased_at: Option<u64>,
         last_paid_at: Option<u64>,
+        lease_paid_until: Option<u64>,
         terminated_at: Option<u64>,
         status: u8,
     }
@@ -128,7 +136,7 @@ mod leasingmanager {
     }
 
     #[ink(event)]
-    pub struct LeaseTermintated {
+    pub struct LeaseRemoved {
         #[ink(topic)]
         investor: AccountId,
         #[ink(topic)]
@@ -151,6 +159,8 @@ mod leasingmanager {
         #[ink(topic)]
         to: AccountId,
     }
+
+    pub const SECONDS_IN_DAYS: u64 = 86_400;
 
     impl LeasingManager {
         /// Constructors can delegate to other constructors.
@@ -238,9 +248,10 @@ mod leasingmanager {
                 renter_address: None,
                 status: LeaseStatus::Available as u8,
                 lease_duration: lease_duration,
-                created_at: self.get_current_time(),
+                created_at: Self::get_current_time(),
                 leased_at: None,
                 last_paid_at: None,
+                lease_paid_until: None,
                 terminated_at: None,
             };
             self.leases.insert(lease_id, lease);
@@ -296,6 +307,14 @@ mod leasingmanager {
 
             self.renters.insert(caller, rented);
 
+            let lease_clone = lease.clone();
+            self.env().emit_event(LeaseAvailed {
+                renter: caller,
+                nft_address: lease_clone.nft_address,
+                lease_id: lease_clone.id,
+                token_id: lease_clone.token_id,
+            });
+
             Ok(())
         }
 
@@ -335,15 +354,20 @@ mod leasingmanager {
             assert_eq!(lease_opt.is_some(), true, "No lease found");
 
             let lease = lease_opt.unwrap();
-            assert_eq!(
-                lease.investor_address, caller,
-                "Only investor can terminate lease"
-            );
-            assert_eq!(
-                lease.status,
-                LeaseStatus::Rented as u8,
-                "Only rented leases can be terminated"
-            );
+            if caller != lease.investor_address {
+                return Err(Error::NotInvestor);
+            }
+            if LeaseStatus::Rented as u8 != lease.status {
+                return Err(Error::LeaseNotRented);
+            }
+
+            if !Self::is_defaulter(lease) {
+                return Err(Error::LeaseNotDefault);
+            }
+
+            if !Self::lease_duration_over(lease) {
+                return Err(Error::LeaseNotOver);
+            }
 
             // Transfer nft to investor
             let erc721_transfer = self.erc721.transfer(caller, lease.token_id);
@@ -355,6 +379,14 @@ mod leasingmanager {
 
             // Mark lease as terminated
             lease.status = LeaseStatus::Terminated as u8;
+
+            let lease_clone = lease.clone();
+            self.env().emit_event(LeaseTermintated {
+                investor: caller,
+                nft_address: lease_clone.nft_address,
+                lease_id: lease_clone.id,
+                token_id: lease_clone.token_id,
+            });
 
             Ok(())
         }
@@ -461,6 +493,54 @@ mod leasingmanager {
 
             leasingmanager.disable();
             assert_eq!(leasingmanager.is_enabled(), false);
+        }
+
+        #[ink::test]
+        fn lease_duration_works() {
+            assert_eq!(
+                LeasingManager::duration_in_days(SECONDS_IN_DAYS * 1 * 1000, 0),
+                1
+            );
+
+            assert_eq!(
+                LeasingManager::duration_in_days(
+                    SECONDS_IN_DAYS * 3 * 1000,
+                    SECONDS_IN_DAYS * 1 * 1000
+                ),
+                2
+            );
+
+            assert_eq!(
+                LeasingManager::duration_in_days(
+                    SECONDS_IN_DAYS * 3 * 1000,
+                    (SECONDS_IN_DAYS + 1) * 1 * 1000
+                ),
+                2
+            );
+
+            assert_eq!(
+                LeasingManager::duration_in_days(
+                    SECONDS_IN_DAYS * 300 * 1000,
+                    SECONDS_IN_DAYS * 1 * 1000
+                ),
+                299
+            );
+
+            assert_eq!(
+                LeasingManager::duration_in_days(
+                    (SECONDS_IN_DAYS + 1) * 1 * 1000,
+                    SECONDS_IN_DAYS * 1 * 1000
+                ),
+                1
+            );
+
+            assert_eq!(
+                LeasingManager::duration_in_days(
+                    SECONDS_IN_DAYS * 1000 * 1000,
+                    (SECONDS_IN_DAYS - 1) * 999 * 1000
+                ),
+                2
+            );
         }
     }
 }
