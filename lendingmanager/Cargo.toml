@@ -1,6 +1,7 @@
 [package]
 name = "lendingmanager"
 version = "0.1.0"
+authors = ["Vera Devs"]
 edition = "2018"
 
 [dependencies]
