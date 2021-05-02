@@ -42,7 +42,7 @@ When Bob pays back the balance, the asset is released.
 ### Build
 
 ```
-cargo build
+cargo +nightly contract build
 ```
 
 ### Test
