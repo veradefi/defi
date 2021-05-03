@@ -52,7 +52,7 @@ mod exchangemanager {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
     pub struct Trade {
         id: TradeId,
-        price: u64,
+        price: Balance,
         nft_address: AccountId,
         token_id: TokenId,
         seller_address: AccountId,
@@ -73,7 +73,6 @@ mod exchangemanager {
         administration: Administration,
         total_trades: u32,
         erc20: Lazy<Erc20>,
-        erc721: Lazy<Erc721>,
     }
 
     #[ink(event)]
@@ -81,18 +80,31 @@ mod exchangemanager {
         #[ink(topic)]
         seller: AccountId,
         #[ink(topic)]
-        amount: Balance,
+        nft_address: AccountId,
         #[ink(topic)]
-        borrow_rate: u64,
+        trade_id: TradeId,
         token_id: u32,
+        price: Balance,
     }
 
     #[ink(event)]
     pub struct TradePurchased {
         #[ink(topic)]
-        borrower: AccountId,
+        buyer: AccountId,
         #[ink(topic)]
-        amount: Balance,
+        nft_address: AccountId,
+        #[ink(topic)]
+        trade_id: TradeId,
+        token_id: u32,
+    }
+    #[ink(event)]
+    pub struct TradeCancelled {
+        #[ink(topic)]
+        buyer: AccountId,
+        #[ink(topic)]
+        nft_address: AccountId,
+        #[ink(topic)]
+        trade_id: TradeId,
         token_id: u32,
     }
 
@@ -121,23 +133,16 @@ mod exchangemanager {
     impl ExchangeManager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
-        pub fn new(
-            erc20_address: AccountId,
-            erc721_address: AccountId,
-            fee: u64,
-            enabled: bool,
-        ) -> Self {
+        pub fn new(erc20_address: AccountId, fee: u64, enabled: bool) -> Self {
             let owner = Self::env().caller();
 
             let erc20 = Erc20::from_account_id(erc20_address);
-            let erc721 = Erc721::from_account_id(erc721_address);
             let instance = Self {
                 owner: Ownable { owner },
                 administration: Administration { fee, enabled },
                 trades: Default::default(),
                 total_trades: 0,
                 erc20: Lazy::new(erc20),
-                erc721: Lazy::new(erc721),
             };
             instance
         }
@@ -181,15 +186,14 @@ mod exchangemanager {
             nft_address: AccountId,
             token_id: TokenId,
             beneficiary_address: AccountId,
-            price: u64,
+            price: Balance,
             expiration_date: u64,
         ) -> Result<(), Error> {
             let caller = self.env().caller();
             let contract_address = self.env().account_id();
             // Transfer tokens from caller to contract
-            let erc721_transfer = self
-                .erc721
-                .transfer_from(caller, contract_address, token_id);
+            let mut erc721 = Self::get_nft(nft_address);
+            let erc721_transfer = erc721.transfer_from(caller, contract_address, token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
@@ -213,6 +217,13 @@ mod exchangemanager {
             };
             self.trades.insert(trade_id, trade);
 
+            self.env().emit_event(TradeListed {
+                seller: caller,
+                nft_address: nft_address,
+                trade_id: trade_id,
+                token_id: token_id,
+                price: price,
+            });
             Ok(())
         }
 
@@ -226,8 +237,15 @@ mod exchangemanager {
             assert_eq!(trade_opt.is_some(), true, "Trade not available");
 
             let trade = trade_opt.unwrap();
+
+            assert_eq!(
+                trade.status,
+                TradeStatus::Available as u8,
+                "Only available trades can be purchased"
+            );
+
             // Deduct fee
-            let fee = trade.fee * trade.price / 100;
+            let fee: u128 = (trade.fee as u128) * trade.price / 100;
             let erc20_amount = trade.price - fee;
 
             // Transfer tokens to contract
@@ -243,9 +261,8 @@ mod exchangemanager {
             assert_eq!(fee_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
             // Transfer nft to buyer
-            let erc721_transfer =
-                self.erc721
-                    .transfer_from(contract_address, caller, trade.token_id);
+            let mut erc721 = Self::get_nft(trade.nft_address);
+            let erc721_transfer = erc721.transfer_from(contract_address, caller, trade.token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
@@ -255,6 +272,14 @@ mod exchangemanager {
             // Mark trade as done
             trade.buyer_address = Some(caller);
             trade.status = TradeStatus::Purchased as u8;
+
+            let trade_clone = trade.clone();
+            self.env().emit_event(TradePurchased {
+                buyer: caller,
+                nft_address: trade_clone.nft_address,
+                trade_id: trade_clone.id,
+                token_id: trade_clone.token_id,
+            });
 
             Ok(())
         }
@@ -270,10 +295,15 @@ mod exchangemanager {
             let trade = trade_opt.unwrap();
             assert_eq!(trade.seller_address, caller, "Only seller can expire trade");
 
+            assert_eq!(
+                trade.status,
+                TradeStatus::Available as u8,
+                "Only available trades can be expired"
+            );
+
             //Transfer token back to seller
-            let erc721_transfer =
-                self.erc721
-                    .transfer_from(contract_address, caller, trade.token_id);
+            let mut erc721 = Self::get_nft(trade.nft_address);
+            let erc721_transfer = erc721.transfer_from(contract_address, caller, trade.token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
@@ -282,7 +312,50 @@ mod exchangemanager {
 
             trade.status = TradeStatus::Cancelled as u8;
 
+            let trade_clone = trade.clone();
+            self.env().emit_event(TradeCancelled {
+                buyer: caller,
+                nft_address: trade_clone.nft_address,
+                trade_id: trade_clone.id,
+                token_id: trade_clone.token_id,
+            });
+
             Ok(())
+        }
+
+        #[ink(message)]
+        pub fn withdraw_fees(&mut self, erc20_address: AccountId) {
+            assert!(self.only_owner(self.env().caller()));
+            let contract_address = self.env().account_id();
+
+            let balance = self.erc20.balance_of(contract_address);
+            let fee_transfer = self.erc20.transfer(erc20_address, balance);
+            assert_eq!(fee_transfer.is_ok(), true, "ERC20 Token transfer failed");
+        }
+
+        #[ink(message)]
+        pub fn list_trades_paginated(&self, start: u64, end: u64) -> Vec<Trade> {
+            let mut trades: Vec<Trade> = Vec::new();
+
+            for i in start..end {
+                let trade_opt = self.trades.get(&i);
+                if trade_opt.is_some() {
+                    trades.push(*trade_opt.unwrap());
+                }
+            }
+            trades
+        }
+
+        #[ink(message)]
+        pub fn list_available_trades(&self) -> Vec<Trade> {
+            let mut trades: Vec<Trade> = Vec::new();
+
+            for (_i, trade) in self.trades.iter() {
+                if trade.status == TradeStatus::Available as u8 {
+                    trades.push(*trade);
+                }
+            }
+            trades
         }
 
         #[ink(message)]
@@ -301,15 +374,6 @@ mod exchangemanager {
             assert_eq!(trade_opt.is_some(), true, "Trade not available");
 
             *trade_opt.clone().unwrap()
-        }
-
-        #[ink(message)]
-        pub fn withdraw_fees(&mut self, erc20_address: AccountId) {
-            assert!(self.only_owner(self.env().caller()));
-            let contract_address = self.env().account_id();
-
-            let balance = self.erc20.balance_of(contract_address);
-            self.erc20.transfer(erc20_address, balance);
         }
 
         /// Allows owner to set transfer rate
@@ -354,6 +418,10 @@ mod exchangemanager {
 
         fn get_current_time(&self) -> u64 {
             self.env().block_timestamp()
+        }
+
+        fn get_nft(address: AccountId) -> Erc721 {
+            Erc721::from_account_id(address)
         }
     }
 }
