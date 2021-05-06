@@ -35,6 +35,7 @@ mod leasingmanager {
         Available,
         Rented,
         Terminated,
+        Removed,
     }
 
     #[derive(Encode, Decode, Debug, PartialEq, Eq, Copy, Clone)]
@@ -84,7 +85,6 @@ mod leasingmanager {
         administration: Administration,
         total_leases: u32,
         erc20: Lazy<Erc20>,
-        erc721: Lazy<Erc721>,
     }
 
     #[ink(event)]
@@ -125,7 +125,7 @@ mod leasingmanager {
     }
 
     #[ink(event)]
-    pub struct LeaseFinished {
+    pub struct LeaseTermintated {
         #[ink(topic)]
         investor: AccountId,
         #[ink(topic)]
@@ -165,11 +165,10 @@ mod leasingmanager {
     impl LeasingManager {
         /// Constructors can delegate to other constructors.
         #[ink(constructor)]
-        pub fn new(erc20_address: AccountId, erc721_address: AccountId, enabled: bool) -> Self {
+        pub fn new(erc20_address: AccountId, enabled: bool) -> Self {
             let owner = Self::env().caller();
 
             let erc20 = Erc20::from_account_id(erc20_address);
-            let erc721 = Erc721::from_account_id(erc721_address);
 
             let instance = Self {
                 owner: Ownable { owner },
@@ -179,7 +178,6 @@ mod leasingmanager {
                 renters: Default::default(),
                 total_leases: 0,
                 erc20: Lazy::new(erc20),
-                erc721: Lazy::new(erc721),
             };
             instance
         }
@@ -224,12 +222,12 @@ mod leasingmanager {
             lease_duration: u64,
         ) -> Result<(), Error> {
             assert_eq!(self.is_enabled(), true, "Listing is not enabled");
+
             let caller = self.env().caller();
             let contract_address = self.env().account_id();
             // Transfer tokens from caller to contract
-            let erc721_transfer = self
-                .erc721
-                .transfer_from(caller, contract_address, token_id);
+            let mut erc721 = Self::get_nft(nft_address);
+            let erc721_transfer = erc721.transfer_from(caller, contract_address, token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
@@ -265,13 +263,24 @@ mod leasingmanager {
             invested.push(lease_id);
 
             self.investors.insert(caller, invested);
+
+            self.env().emit_event(LeaseListed {
+                investor: caller,
+                nft_address: nft_address,
+                lease_id: lease_id,
+                token_id: token_id,
+                beneficiary_address: beneficiary_address,
+                daily_rent: daily_rent as u128,
+                lease_duration: lease_duration,
+            });
+
             Ok(())
         }
 
         #[ink(message)]
         pub fn rent(&mut self, lease_id: u64) -> Result<(), Error> {
             assert_eq!(self.is_enabled(), true, "Leasing is not enabled");
-            let current_time = self.get_current_time();
+            let current_time = Self::get_current_time();
             let caller = self.env().caller();
 
             let lease_opt = self.leases.get_mut(&lease_id);
@@ -290,12 +299,14 @@ mod leasingmanager {
                 lease.beneficiary_address,
                 lease.daily_rent as u128,
             );
+
             assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
             // Mark lease as rented
             lease.renter_address = Some(caller);
             lease.leased_at = Some(current_time);
             lease.last_paid_at = Some(current_time);
+            lease.lease_paid_until = Some(current_time + SECONDS_IN_DAYS * 1000);
             lease.status = LeaseStatus::Rented as u8;
 
             let mut rented: Vec<LeaseId> = Vec::new();
@@ -320,7 +331,7 @@ mod leasingmanager {
 
         #[ink(message)]
         pub fn pay_rent(&mut self, lease_id: u64) -> Result<(), Error> {
-            let current_time = self.get_current_time();
+            let current_time = Self::get_current_time();
             let caller = self.env().caller();
 
             let lease_opt = self.leases.get_mut(&lease_id);
@@ -333,16 +344,29 @@ mod leasingmanager {
                 "Lease is not rented"
             );
 
+            let lease_duration =
+                Self::duration_in_days(lease.lease_paid_until.unwrap(), current_time);
+            let rent_amount = (lease_duration * lease.daily_rent) as u128;
             // Transfer daily rent to beneficiary
-            let erc20_transfer = self.erc20.transfer_from(
-                caller,
-                lease.beneficiary_address,
-                lease.daily_rent as u128,
-            );
+            let erc20_transfer =
+                self.erc20
+                    .transfer_from(caller, lease.beneficiary_address, rent_amount);
             assert_eq!(erc20_transfer.is_ok(), true, "ERC20 Token transfer failed");
 
             lease.last_paid_at = Some(current_time);
+            lease.lease_paid_until =
+                Some(lease.lease_paid_until.unwrap() + (lease_duration * SECONDS_IN_DAYS) * 1000);
             lease.status = LeaseStatus::Rented as u8;
+
+            let lease_ = lease.clone();
+            self.env().emit_event(RentPaid {
+                renter: caller,
+                nft_address: lease_.nft_address,
+                lease_id: lease_.id,
+                token_id: lease_.token_id,
+                rent_amount: rent_amount,
+            });
+
             Ok(())
         }
 
@@ -354,12 +378,16 @@ mod leasingmanager {
             assert_eq!(lease_opt.is_some(), true, "No lease found");
 
             let lease = lease_opt.unwrap();
-            if caller != lease.investor_address {
-                return Err(Error::NotInvestor);
-            }
-            if LeaseStatus::Rented as u8 != lease.status {
-                return Err(Error::LeaseNotRented);
-            }
+            assert_eq!(
+                lease.investor_address, caller,
+                "Only investor can terminate lease"
+            );
+
+            assert_eq!(
+                lease.status,
+                LeaseStatus::Rented as u8,
+                "Only rented leases can be terminated"
+            );
 
             if !Self::is_defaulter(lease) {
                 return Err(Error::LeaseNotDefault);
@@ -370,7 +398,8 @@ mod leasingmanager {
             }
 
             // Transfer nft to investor
-            let erc721_transfer = self.erc721.transfer(caller, lease.token_id);
+            let mut erc721 = Self::get_nft(lease.nft_address);
+            let erc721_transfer = erc721.transfer(caller, lease.token_id);
             assert_eq!(
                 erc721_transfer.is_ok(),
                 true,
@@ -389,6 +418,111 @@ mod leasingmanager {
             });
 
             Ok(())
+        }
+
+        #[ink(message)]
+        pub fn remove_token(&mut self, lease_id: u64) -> Result<(), Error> {
+            let caller = self.env().caller();
+
+            let lease_opt = self.leases.get_mut(&lease_id);
+            assert_eq!(lease_opt.is_some(), true, "No lease found");
+            let lease = lease_opt.unwrap();
+            assert_eq!(
+                lease.investor_address, caller,
+                "Only investor can remove lease"
+            );
+
+            assert_eq!(
+                lease.status,
+                LeaseStatus::Available as u8,
+                "Only available leases can be removed"
+            );
+
+            // Transfer nft to investor
+            let mut erc721 = Self::get_nft(lease.nft_address);
+            let erc721_transfer = erc721.transfer(caller, lease.token_id);
+            assert_eq!(
+                erc721_transfer.is_ok(),
+                true,
+                "ERC721 Token transfer failed"
+            );
+
+            // Mark lease as removed
+            lease.status = LeaseStatus::Removed as u8;
+
+            let lease_clone = lease.clone();
+            self.env().emit_event(LeaseRemoved {
+                investor: caller,
+                nft_address: lease_clone.nft_address,
+                lease_id: lease_clone.id,
+                token_id: lease_clone.token_id,
+            });
+
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn list_leases_paginated(&self, start: u64, end: u64) -> Vec<Lease> {
+            let mut leases: Vec<Lease> = Vec::new();
+            // self.leases.iter().skip(start).take(end)
+
+            for i in start..end {
+                let lease_opt = self.leases.get(&i);
+                if lease_opt.is_some() {
+                    leases.push(*lease_opt.unwrap());
+                }
+            }
+            leases
+        }
+
+        #[ink(message)]
+        pub fn list_leases(&self) -> Vec<Lease> {
+            let mut leases: Vec<Lease> = Vec::new();
+
+            for (_i, lease) in self.leases.iter() {
+                leases.push(*lease);
+            }
+            leases
+        }
+
+        #[ink(message)]
+        pub fn list_lease(&self, lease_id: u64) -> Result<Lease, Error> {
+            let lease_opt = self.leases.get(&lease_id);
+            if lease_opt.is_none() {
+                return Err(Error::NoSuchLease);
+            }
+
+            Ok(*lease_opt.unwrap())
+        }
+
+        #[ink(message)]
+        pub fn is_rent_due(&self, lease_id: u64) -> Result<bool, Error> {
+            let lease_opt = self.leases.get(&lease_id);
+            if lease_opt.is_none() {
+                return Err(Error::NoSuchLease);
+            }
+            let lease = lease_opt.unwrap();
+            let mut rent_due: bool = false;
+            if lease.status == LeaseStatus::Rented as u8 {
+                rent_due = lease.lease_paid_until.unwrap() < Self::get_current_time();
+            }
+            Ok(rent_due)
+        }
+
+        #[ink(message)]
+        pub fn get_lease_duration(&self, lease_id: LeaseId) -> Result<u64, Error> {
+            let lease_opt = self.leases.get(&lease_id);
+            if lease_opt.is_none() {
+                return Err(Error::NoSuchLease);
+            }
+
+            let lease = lease_opt.unwrap();
+            let mut duration: u64 = 0;
+            if lease.leased_at.is_some() {
+                duration =
+                    Self::duration_in_days(Self::get_current_time(), lease.leased_at.unwrap())
+            }
+            Ok(duration)
         }
 
         #[ink(message)]
@@ -435,8 +569,42 @@ mod leasingmanager {
             self.administration.enabled
         }
 
-        fn get_current_time(&self) -> u64 {
-            self.env().block_timestamp()
+        fn get_current_time() -> u64 {
+            Self::env().block_timestamp()
+        }
+
+        fn get_nft(address: AccountId) -> Erc721 {
+            Erc721::from_account_id(address)
+        }
+
+        fn is_defaulter(lease: &Lease) -> bool {
+            lease.lease_paid_until.unwrap()
+                < (Self::get_current_time() - SECONDS_IN_DAYS * 3 * 1000)
+        }
+
+        fn lease_duration_over(lease: &Lease) -> bool {
+            (lease.leased_at.unwrap() + lease.lease_duration) < Self::get_current_time()
+        }
+
+        fn duration_in_days(current_time: u64, leased_at: u64) -> u64 {
+            let seconds_since_leased = (current_time - leased_at) / 1000;
+            let mut days = Self::divide(seconds_since_leased, SECONDS_IN_DAYS, 3);
+            days = days / 1000;
+            if seconds_since_leased > 0 && days == 0 {
+                days += 1;
+            } else if seconds_since_leased > (days * SECONDS_IN_DAYS) {
+                days += 1;
+            }
+
+            days
+        }
+
+        fn divide(numerator: u64, denominator: u64, precision: u32) -> u64 {
+            let power: u64 = (10 as u64).pow(precision + 1);
+            let _numerator: u64 = numerator * power;
+            // with rounding of last digit
+            let _quotient: u64 = ((_numerator / denominator) + 5) / 10;
+            return _quotient;
         }
     }
 
@@ -453,29 +621,15 @@ mod leasingmanager {
                 ink_env::account_id::<ink_env::DefaultEnvironment>().unwrap_or([0x0; 32].into());
             callee
         }
-        fn instantiate_erc721_contract() -> AccountId {
-            let erc20 = Erc721::new();
-            let callee =
-                ink_env::account_id::<ink_env::DefaultEnvironment>().unwrap_or([0x0; 32].into());
-            callee
-        }
         #[ink::test]
         fn new_works() {
-            let leasingmanager = LeasingManager::new(
-                instantiate_erc20_contract(),
-                instantiate_erc721_contract(),
-                true,
-            );
+            let leasingmanager = LeasingManager::new(instantiate_erc20_contract(), true);
             assert_eq!(leasingmanager.is_enabled(), true);
         }
 
         #[ink::test]
         fn enable_works() {
-            let mut leasingmanager = LeasingManager::new(
-                instantiate_erc20_contract(),
-                instantiate_erc721_contract(),
-                false,
-            );
+            let mut leasingmanager = LeasingManager::new(instantiate_erc20_contract(), false);
             assert_eq!(leasingmanager.is_enabled(), false);
 
             leasingmanager.enable();
@@ -484,11 +638,7 @@ mod leasingmanager {
 
         #[ink::test]
         fn disable_works() {
-            let mut leasingmanager = LeasingManager::new(
-                instantiate_erc20_contract(),
-                instantiate_erc721_contract(),
-                true,
-            );
+            let mut leasingmanager = LeasingManager::new(instantiate_erc20_contract(), true);
             assert_eq!(leasingmanager.is_enabled(), true);
 
             leasingmanager.disable();
