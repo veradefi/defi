@@ -220,7 +220,8 @@ mod lendingmanager {
         fn only_owner(&self, caller: AccountId) -> bool {
             caller == self.owner.owner
         }
-
+        
+        /// To list your token for lending
         #[ink(message)]
         pub fn list_token(
             &mut self,
