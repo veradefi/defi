@@ -274,7 +274,8 @@ mod lendingmanager {
             self.borrowers.insert(caller, borrowed);
             Ok(())
         }
-
+        
+        /// Lend vt against NFT as collateral
         #[ink(message)]
         pub fn lend(&mut self, loan_id: u64) -> Result<(), Error> {
             assert_eq!(self.is_enabled(), true, "Lending is not enabled");
