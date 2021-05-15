@@ -225,16 +225,18 @@ mod lendingmanager {
         #[ink(message)]
         pub fn list_token(
             &mut self,
-            nft_address: AccountId,
+            erc721_address: AccountId,
             token_id: TokenId,
             beneficiary_address: AccountId,
-            amount: u64,
+            loan_amount: u64,
             loan_duration: u64,
         ) -> Result<(), Error> {
             assert_eq!(self.is_enabled(), true, "Listing is not enabled");
             let caller = self.env().caller();
             let contract_address = self.env().account_id();
+            
             // Transfer tokens from caller to contract
+
             let erc721_transfer = self
                 .erc721
                 .transfer_from(caller, contract_address, token_id);
@@ -248,8 +250,8 @@ mod lendingmanager {
             // Add trade into current active list
             let loan = Loan {
                 id: loan_id,
-                amount: amount,
-                nft_address: nft_address,
+                amount: loan_amount,
+                nft_address: erc721_address,
                 token_id: token_id,
                 borrower_address: caller,
                 beneficiary_address: beneficiary_address,
@@ -261,6 +263,7 @@ mod lendingmanager {
                 repaid_at: None,
                 interest_rate: self.administration.interest_rate,
             };
+
             self.loans.insert(loan_id, loan);
             self.total_loans += 1;
 
