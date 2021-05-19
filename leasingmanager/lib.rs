@@ -212,6 +212,7 @@ mod leasingmanager {
             caller == self.owner.owner
         }
 
+        /// List token for leasing
         #[ink(message)]
         pub fn list_token(
             &mut self,
@@ -277,6 +278,7 @@ mod leasingmanager {
             Ok(())
         }
 
+        /// Rent a token
         #[ink(message)]
         pub fn rent(&mut self, lease_id: u64) -> Result<(), Error> {
             assert_eq!(self.is_enabled(), true, "Leasing is not enabled");
