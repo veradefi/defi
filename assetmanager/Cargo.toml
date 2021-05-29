@@ -3,6 +3,7 @@ name = "assetmanager"
 version = "0.1.0"
 authors = ["Vera DeFi"]
 edition = "2018"
+description = "A smart contract to manage non-fungible tokens"
 
 [dependencies]
 ink_primitives = { version = "3.0.0-rc3", default-features = false }
