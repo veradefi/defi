@@ -10,19 +10,37 @@ EOF
 
 echo This will take a while please be patient
 
+
+if [ -n "( lsb_release -a | grep Ubuntu ) " ];then
+
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata
 
 sudo apt update
 
 sudo apt install -y git clang curl libssl-dev llvm libudev-dev
 
+if [ -z "$(command -v rustc)" ]; then
+
 curl https://getsubstrate.io -sSf | bash -s -- --fast
+
+fi
 
 source ~/.cargo/env
 
+if [ "$(cargo-contract -V)" != "cargo-contract 0.8.0" ]; then
+
 cargo install cargo-contract --vers ^0.8 --force --locked
+
+fi
 
 rustup component add rust-src --toolchain nightly
 
-echo Please run the following command
-echo source ~/.cargo/env
+for d in */ ; do
+    (cd "$d" &&
+    if [ -f Cargo.toml ]; then
+    echo "Building ----> $d";
+    cargo +nightly contract build
+    fi)
+done
+
+fi
