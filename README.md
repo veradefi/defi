@@ -48,7 +48,7 @@ cargo +nightly contract build
 ### Test
 
 ```
-cargo test
+cargo +nightly test
 ```
 
 ### Smart Contract Deployment ###
