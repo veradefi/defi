@@ -39,6 +39,16 @@ When Bob pays back the balance, the asset is released.
 
 ## Development
 
+### Using bash script
+
+This script will setup the environment and build our contracts for ubuntu operating system
+
+```
+# Set execute permission and run the script:
+chmod +x build.sh
+./build.sh
+```
+
 ### Build
 
 ```
@@ -48,7 +58,7 @@ cargo +nightly contract build
 ### Test
 
 ```
-cargo test
+cargo +nightly test
 ```
 
 ### Smart Contract Deployment ###
