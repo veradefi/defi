@@ -1,0 +1,29 @@
+name: Build & Test Leasingmanager contract
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'leasingmanager/**'
+  
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'leasingmanager/**'
+      
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    container: veradefi/substrate_env:latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Test
+      run: cargo +nightly test
+      working-directory: leasingmanager
+
+    - name: Build
+      run: cargo +nightly contract build
+      working-directory: leasingmanager
