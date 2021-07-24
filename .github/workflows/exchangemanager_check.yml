@@ -1,0 +1,29 @@
+name: Build & Test exchangemanager contract
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'exchangemanager/**'
+  
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'exchangemanager/**'
+      
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    container: veradefi/substrate_env:latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Test
+      run: cargo +nightly test
+      working-directory: exchangemanager
+
+    - name: Build
+      run: cargo +nightly contract build
+      working-directory: exchangemanager
