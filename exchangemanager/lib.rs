@@ -424,4 +424,49 @@ mod exchangemanager {
             Erc721::from_account_id(address)
         }
     }
+
+    mod tests {
+        /// Imports all the definitions from the outer scope so we can use them here.
+        use super::*;
+        use ink_lang as ink;
+        /// We test if the constructor does its job.
+        fn instantiate_erc20_contract() -> AccountId {
+            let erc20 = Erc20::new(1000000);
+            let callee =
+                ink_env::account_id::<ink_env::DefaultEnvironment>().unwrap_or([0x0; 32].into());
+            callee
+        }
+
+        #[ink::test]
+        fn new_works() {
+            let exchangemanager = ExchangeManager::new(
+                instantiate_erc20_contract(),
+                10,
+                true,
+            );
+            assert_eq!(exchangemanager.is_enabled(), true);
+            assert_eq!(exchangemanager.get_fee(), 10);
+        }
+
+        #[ink::test]
+        fn enable_works() {
+            let mut exchangemanager = ExchangeManager::new(instantiate_erc20_contract(),10, false);
+            assert_eq!(exchangemanager.is_enabled(), false);
+
+            exchangemanager.enable();
+            assert_eq!(exchangemanager.is_enabled(), true);
+        }
+
+        #[ink::test]
+        fn set_fee_works() {
+            let mut exchangemanager = ExchangeManager::new(instantiate_erc20_contract(),20, true);
+            assert_eq!(exchangemanager.get_fee(), 20);
+
+            exchangemanager.set_fee(10);
+            assert_eq!(exchangemanager.get_fee(), 10);
+        }
+
+        
+
+    }
 }
