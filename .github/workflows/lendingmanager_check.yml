@@ -1,4 +1,4 @@
-name: Build & Test LendingManager contract
+name: Lending Smart contract Test
 
 on:
   push:
