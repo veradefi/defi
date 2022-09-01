@@ -1,7 +1,7 @@
 [package]
 name = "erc20"
 version = "0.1.0"
-authors = ["Vera DeFi"]
+authors = ["Vera Financial"]
 edition = "2018"
 
 [dependencies]
